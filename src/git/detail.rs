@@ -46,7 +46,15 @@ pub fn load_detail(git: &Git, hash: &str) -> Result<CommitDetail, GitError> {
     let timestamp = next().trim().parse().unwrap_or(0);
     let message = next().trim_end().to_string();
 
-    let mut args = vec!["diff-tree", "-r", "--raw", "--numstat", "-z", "--no-commit-id"];
+    let mut args = vec![
+        "diff-tree",
+        "-r",
+        "--no-ext-diff",
+        "--raw",
+        "--numstat",
+        "-z",
+        "--no-commit-id",
+    ];
     let out = match parents.first() {
         Some(p) => {
             args.extend([p.as_str(), full_hash.as_str()]);
@@ -75,9 +83,18 @@ fn parse_raw_numstat(out: &str) -> Vec<FileChange> {
     let mut tokens = out.split('\0').filter(|t| !t.is_empty());
     while let Some(tok) = tokens.next() {
         if tok.starts_with(':') {
-            let status = tok.rsplit(' ').next().and_then(|s| s.chars().next()).unwrap_or('M');
+            let status = tok
+                .rsplit(' ')
+                .next()
+                .and_then(|s| s.chars().next())
+                .unwrap_or('M');
             if let Some(path) = tokens.next() {
-                files.push(FileChange { path: path.to_string(), status, added: None, deleted: None });
+                files.push(FileChange {
+                    path: path.to_string(),
+                    status,
+                    added: None,
+                    deleted: None,
+                });
             }
         } else {
             let mut f = tok.splitn(3, '\t');
@@ -96,8 +113,17 @@ fn parse_raw_numstat(out: &str) -> Vec<FileChange> {
 pub fn load_file_diff(git: &Git, hash: &str, path: &str) -> Result<String, GitError> {
     let parents = git.run(&["show", "-s", "--format=%P", hash, "--"])?;
     match parents.split_whitespace().next() {
-        Some(p) => git.run(&["diff", p, hash, "--", path]),
-        None => git.run(&["diff-tree", "-p", "--root", "--no-commit-id", hash, "--", path]),
+        Some(p) => git.run(&["diff", "--no-ext-diff", p, hash, "--", path]),
+        None => git.run(&[
+            "diff-tree",
+            "-p",
+            "--no-ext-diff",
+            "--root",
+            "--no-commit-id",
+            hash,
+            "--",
+            path,
+        ]),
     }
 }
 
@@ -105,7 +131,9 @@ pub fn load_file_diff(git: &Git, hash: &str, path: &str) -> Result<String, GitEr
 pub fn load_worktree_changes(git: &Git) -> Result<Vec<FileChange>, GitError> {
     let status = git.run(&["status", "--porcelain=v1", "-z", "-uall"])?;
     // No HEAD yet (fresh repo): counts are simply unavailable.
-    let counts = git.run(&["diff", "HEAD", "--numstat", "-z"]).unwrap_or_default();
+    let counts = git
+        .run(&["diff", "--no-ext-diff", "HEAD", "--numstat", "-z"])
+        .unwrap_or_default();
     let mut count_map: HashMap<String, (Option<u32>, Option<u32>)> = HashMap::new();
     let mut toks = counts.split('\0').filter(|t| !t.is_empty());
     while let Some(tok) = toks.next() {
@@ -141,7 +169,12 @@ pub fn load_worktree_changes(git: &Git) -> Result<Vec<FileChange>, GitError> {
             x
         };
         let (added, deleted) = count_map.get(&path).copied().unwrap_or((None, None));
-        files.push(FileChange { path, status, added, deleted });
+        files.push(FileChange {
+            path,
+            status,
+            added,
+            deleted,
+        });
     }
     Ok(files)
 }
@@ -149,7 +182,7 @@ pub fn load_worktree_changes(git: &Git) -> Result<Vec<FileChange>, GitError> {
 /// Untracked files are read from disk (capped at `MAX_UNTRACKED_BYTES`); tracked ones use `git diff HEAD`.
 pub fn load_worktree_diff(git: &Git, change: &FileChange) -> Result<String, GitError> {
     if change.status != '?' {
-        return git.run(&["diff", "HEAD", "--", &change.path]);
+        return git.run(&["diff", "--no-ext-diff", "HEAD", "--", &change.path]);
     }
     let mut buf = Vec::new();
     File::open(git.dir().join(&change.path))
@@ -186,7 +219,10 @@ impl Default for DetailCache {
 
 impl DetailCache {
     pub fn new() -> Self {
-        DetailCache { map: HashMap::new(), order: VecDeque::new() }
+        DetailCache {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+        }
     }
 
     pub fn get_or_load(&mut self, git: &Git, hash: &str) -> Result<&CommitDetail, GitError> {

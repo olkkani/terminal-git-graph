@@ -65,11 +65,21 @@ impl Git {
     pub fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Result<String, GitError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         let mut cmd = Command::new("git");
-        cmd.args(args)
-            .current_dir(&self.dir)
-            .stdin(Stdio::null())
-            .env("LC_ALL", "C")
-            .env("GIT_TERMINAL_PROMPT", "0");
+        cmd.args([
+            "-c",
+            "color.ui=never",
+            "-c",
+            "core.pager=cat",
+            "-c",
+            "diff.external=",
+            "-c",
+            "core.quotepath=off",
+        ])
+        .args(args)
+        .current_dir(&self.dir)
+        .stdin(Stdio::null())
+        .env("LC_ALL", "C")
+        .env("GIT_TERMINAL_PROMPT", "0");
         for (k, v) in env {
             cmd.env(k, v);
         }

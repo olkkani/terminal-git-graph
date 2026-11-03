@@ -136,3 +136,19 @@ fn detail_cache_hit_makes_no_second_git_call() {
     assert_eq!(cache.get_or_load(&git, &h).unwrap().hash, h);
     assert_eq!(git.call_count(), calls);
 }
+
+#[test]
+fn user_git_config_does_not_affect_diff_output() {
+    let repo = TestRepo::new();
+    repo.commit_file("a.txt", "one\n", "first");
+    let h = repo.commit_file("a.txt", "one\ntwo\n", "second");
+    repo.git(&["config", "color.ui", "always"]);
+    repo.git(&["config", "diff.external", "false"]);
+    let git = Git::at(repo.path());
+    let d = load_file_diff(&git, &h, "a.txt").unwrap();
+    assert!(d.contains("@@") && !d.contains('\x1b'), "{d:?}");
+    fs::write(repo.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    let changes = load_worktree_changes(&git).unwrap();
+    let w = load_worktree_diff(&git, &changes[0]).unwrap();
+    assert!(w.contains("@@") && !w.contains('\x1b'), "{w:?}");
+}
