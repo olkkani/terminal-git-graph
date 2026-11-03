@@ -21,7 +21,8 @@ pub struct RepoStatus {
     pub latest_tag: Option<String>,
 }
 
-/// Summarizes a repository. Git failures degrade to empty/neutral values.
+/// Summarizes a repository. Git failures degrade to empty/neutral values. It is polled,
+/// so it never takes git's optional locks (no index refresh is written).
 pub fn repo_status(path: &Path, with_tag: bool) -> RepoStatus {
     let git = Git::at(path);
     let mut branch = None;
@@ -29,7 +30,7 @@ pub fn repo_status(path: &Path, with_tag: bool) -> RepoStatus {
     let mut has_upstream = false;
     let (mut ahead, mut behind) = (0usize, 0usize);
 
-    if let Ok(out) = git.run(&["status", "--porcelain=v2", "--branch"]) {
+    if let Ok(out) = git.run(&["--no-optional-locks", "status", "--porcelain=v2", "--branch"]) {
         for line in out.lines() {
             if let Some(head) = line.strip_prefix("# branch.head ") {
                 if head != "(detached)" {

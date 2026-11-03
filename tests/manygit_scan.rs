@@ -193,3 +193,31 @@ fn latest_tag_only_when_requested() {
     assert_eq!(repo_status(repo.path(), false).latest_tag, None);
     assert_eq!(repo_status(repo.path(), true).latest_tag.as_deref(), Some("v1.0"));
 }
+
+#[test]
+fn status_polling_leaves_the_index_untouched() {
+    let repo = TestRepo::new();
+    repo.commit("base");
+    let index = repo.path().join(".git/index");
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(100);
+    // A tracked file whose stat no longer matches the index makes a plain
+    // `git status` rewrite the index to refresh its stat cache.
+    fs::File::options()
+        .write(true)
+        .open(repo.path().join("file-1.txt"))
+        .unwrap()
+        .set_modified(past + std::time::Duration::from_secs(50))
+        .unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&index)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+    let before = fs::metadata(&index).unwrap().modified().unwrap();
+
+    repo_status(repo.path(), true);
+
+    assert_eq!(fs::metadata(&index).unwrap().modified().unwrap(), before);
+    assert!(!repo.path().join(".git/index.lock").exists());
+}
