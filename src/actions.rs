@@ -99,12 +99,14 @@ pub fn execute(git: &Git, a: &Action) -> Result<String, GitError> {
             let flag = if *force { "-D" } else { "-d" };
             git.run(&["branch", flag, name])
         }
-        Action::DeleteRemoteBranch { remote, name } => git.run(&["push", remote, "--delete", name]),
+        Action::DeleteRemoteBranch { remote, name } => {
+            run_network(git, &["push", remote, "--delete", name])
+        }
         Action::MergeInto(target) => git.run(&["merge", "--no-edit", target]),
         Action::RebaseOnto(target) => git.run(&["rebase", target]),
         Action::PushBranch { remote, name } => {
             let remote = resolve_remote(git, remote, Some(name))?;
-            git.run(&["push", &remote, name])
+            run_network(git, &["push", &remote, name])
         }
         Action::AddTag {
             hash,
@@ -118,7 +120,7 @@ pub fn execute(git: &Git, a: &Action) -> Result<String, GitError> {
         Action::PushTag { remote, name } => {
             let remote = resolve_remote(git, remote, None)?;
             let refspec = format!("refs/tags/{name}");
-            git.run(&["push", &remote, &refspec])
+            run_network(git, &["push", &remote, &refspec])
         }
         Action::CreateBranch { hash, name } => git.run(&["branch", name, hash]),
         Action::CherryPick(hash) => git.run(&["cherry-pick", hash]),
@@ -139,17 +141,42 @@ pub fn execute(git: &Git, a: &Action) -> Result<String, GitError> {
         }
         Action::Stash => git.run(&["stash", "push"]),
         Action::ResetWorktree => git.run(&["reset", "--hard", "HEAD"]),
-        Action::Fetch => git.run(&["fetch"]),
-        Action::FetchAll => git.run_with_env(&["fetch", "--all"], &[("GIT_TERMINAL_PROMPT", "0")]),
-        Action::Pull => git.run(&["pull", "--ff-only"]),
+        Action::Fetch => run_network(git, &["fetch"]),
+        Action::FetchAll => run_network(git, &["fetch", "--all"]),
+        Action::Pull => run_network(git, &["pull", "--ff-only"]),
         Action::PushCurrent => {
             let branch = git.run(&["symbolic-ref", "--short", "HEAD"])?;
             let branch = branch.trim();
             validate_name(branch)?;
             let remote = resolve_remote(git, "", Some(branch))?;
-            git.run(&["push", &remote, branch])
+            run_network(git, &["push", &remote, branch])
         }
     }
+}
+
+/// ssh in batch mode: a passphrase or unknown-host prompt fails with git's error text
+/// instead of drawing on /dev/tty over the TUI.
+pub const BATCH_SSH_COMMAND: &str = "ssh -o BatchMode=yes";
+
+/// The environment for a network git call. Login prompts are always off; ssh is put in
+/// batch mode unless the user chose their own ssh command (`user_ssh_env`: whether
+/// `GIT_SSH_COMMAND` or `GIT_SSH` is set, or `core.sshCommand` in git's config).
+pub fn network_env(git: &Git, user_ssh_env: bool) -> Vec<(&'static str, &'static str)> {
+    let mut env = vec![("GIT_TERMINAL_PROMPT", "0")];
+    // `git config --get` exits 1 when the key is unset.
+    let configured = git
+        .run(&["config", "--get", "core.sshCommand"])
+        .is_ok_and(|out| !out.trim().is_empty());
+    if !user_ssh_env && !configured {
+        env.push(("GIT_SSH_COMMAND", BATCH_SSH_COMMAND));
+    }
+    env
+}
+
+fn run_network(git: &Git, args: &[&str]) -> Result<String, GitError> {
+    let user_ssh_env =
+        std::env::var_os("GIT_SSH_COMMAND").is_some() || std::env::var_os("GIT_SSH").is_some();
+    git.run_with_env(args, &network_env(git, user_ssh_env))
 }
 
 /// The user-supplied name/ref arguments of an action. An empty push remote is resolved later.

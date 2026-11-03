@@ -677,3 +677,64 @@ fn merge_conflict_returns_error_with_conflict_text() {
     let err = execute(&git, &Action::MergeInto(s("topic"))).unwrap_err();
     assert!(err.message().contains("CONFLICT"), "{}", err.message());
 }
+
+#[test]
+fn network_env_uses_batch_ssh_unless_user_chose_ssh() {
+    use terminal_git_graph::actions::{network_env, BATCH_SSH_COMMAND};
+    let repo = TestRepo::new();
+    repo.commit("first");
+    let git = Git::at(repo.path());
+    let batch = ("GIT_SSH_COMMAND", BATCH_SSH_COMMAND);
+    assert!(network_env(&git, false).contains(&batch));
+    assert!(network_env(&git, false).contains(&("GIT_TERMINAL_PROMPT", "0")));
+    assert!(!network_env(&git, true).contains(&batch));
+    repo.git(&["config", "core.sshCommand", "ssh -i key"]);
+    assert!(!network_env(&git, false).contains(&batch));
+}
+
+#[test]
+fn network_actions_pass_batch_ssh_command() {
+    if std::env::var_os("GIT_SSH_COMMAND").is_some() || std::env::var_os("GIT_SSH").is_some() {
+        return; // The user's own ssh command wins; nothing to observe here.
+    }
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.tag("v1");
+    // A fake transport that reports the ssh command it was given, then fails.
+    repo.git(&["config", "protocol.ext.allow", "always"]);
+    repo.git(&[
+        "remote",
+        "add",
+        "origin",
+        "ext::sh -c echo% \"ssh=[$GIT_SSH_COMMAND]\"% >&2;% exit% 1",
+    ]);
+    repo.git(&["config", "branch.main.remote", "origin"]);
+    repo.git(&["config", "branch.main.merge", "refs/heads/main"]);
+    let git = Git::at(repo.path());
+    let actions = [
+        Action::Fetch,
+        Action::FetchAll,
+        Action::Pull,
+        Action::PushBranch {
+            remote: s(""),
+            name: s("main"),
+        },
+        Action::PushCurrent,
+        Action::PushTag {
+            remote: s(""),
+            name: s("v1"),
+        },
+        Action::DeleteRemoteBranch {
+            remote: s("origin"),
+            name: s("main"),
+        },
+    ];
+    for a in actions {
+        let err = execute(&git, &a).expect_err("fake remote fails");
+        assert!(
+            err.message().contains("ssh=[ssh -o BatchMode=yes]"),
+            "{a:?}: {}",
+            err.message()
+        );
+    }
+}
