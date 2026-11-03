@@ -1,3 +1,4 @@
+pub mod detail;
 pub mod log;
 pub mod refs;
 pub mod status;
