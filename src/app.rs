@@ -12,7 +12,10 @@ use crate::git::refs::{load_refs, Head, RefKind, Refs};
 use crate::git::status::{load_status, WorkStatus};
 use crate::git::{Git, GitError};
 use crate::graph::lanes::{GraphRow, LaneBuilder};
+use crate::input::{Hit, InputMode};
 use crate::ui;
+use crate::ui::dialog::{Dialog, DialogState};
+use crate::ui::menu::Menu;
 use crate::ui::theme::ColorDepth;
 use crate::watch::WatchEvent;
 
@@ -25,8 +28,13 @@ pub enum Command {
     PageDown,
     Top,
     Bottom,
-    /// Selects a displayed row by index (the uncommitted row, when shown, is 0).
+    /// Selects a displayed row by index (the uncommitted row, when shown, is 0) and
+    /// focuses the table.
     SelectRow(usize),
+    /// Enter: opens the detail, or focuses its file list when it is already open.
+    Activate,
+    /// Esc in the table: closes the detail, or quits when none is open.
+    Back,
     ToggleScope,
     ToggleRemotes,
     Refresh,
@@ -49,6 +57,28 @@ pub enum Command {
     DiffPageDown,
     DiffTop,
     DiffBottom,
+    /// Selects a file in the detail and focuses the file list.
+    SelectFile(usize),
+    /// Opens the menu for the selected row (the keyboard's right click).
+    OpenMenu,
+    /// Right click: selects the row under `hit` and opens its menu at `pos`.
+    OpenMenuAt {
+        pos: (u16, u16),
+        hit: Hit,
+    },
+    MenuUp,
+    MenuDown,
+    /// Runs the highlighted menu item.
+    MenuSelect,
+    /// Runs the menu item at an index (a click on it), if enabled.
+    MenuPick(usize),
+    MenuClose,
+    DialogAccept,
+    DialogCancel,
+    DialogChar(char),
+    DialogBackspace,
+    Fetch,
+    Help,
 }
 
 /// Where keyboard input goes.
@@ -131,6 +161,9 @@ pub struct App {
     pub(crate) diff_height: Cell<usize>,
     /// Why the last filesystem-triggered refresh failed; cleared by the next success.
     pub(crate) refresh_error: Option<String>,
+    pub(crate) menu: Option<Menu>,
+    /// A modal dialog; while open it takes all input.
+    pub(crate) dialog: Option<DialogState>,
     quit: bool,
 }
 
@@ -160,6 +193,8 @@ impl App {
             cache: DetailCache::new(),
             diff_height: Cell::new(1),
             refresh_error: None,
+            menu: None,
+            dialog: None,
             quit: false,
         };
         app.reload()?;
@@ -167,6 +202,16 @@ impl App {
     }
 
     pub fn apply(&mut self, cmd: Command) -> Result<(), GitError> {
+        let cmd = self.resolve(cmd);
+        if let Some(state) = &mut self.dialog {
+            if cmd == Command::Quit {
+                self.quit = true;
+            } else if state.handle(cmd).is_some() {
+                // The outcome is acted on once dialogs are tied to git actions.
+                self.dialog = None;
+            }
+            return Ok(());
+        }
         let page = self.page_height.get().max(1);
         match cmd {
             Command::Quit => self.quit = true,
@@ -179,11 +224,7 @@ impl App {
                 self.load_page()?;
                 self.selected = self.row_count().saturating_sub(1);
             }
-            Command::SelectRow(i) => {
-                if i < self.row_count() {
-                    self.selected = i;
-                }
-            }
+            Command::SelectRow(i) => self.select_row(i),
             Command::ToggleScope => {
                 self.scope = match self.scope {
                     Scope::AllBranches => Scope::Current,
@@ -277,6 +318,63 @@ impl App {
                     diff.scroll = diff.lines.len().saturating_sub(height);
                 }
             }
+            Command::SelectFile(i) => {
+                if let Some(view) = &mut self.detail {
+                    if i < view.files().map_or(0, <[FileChange]>::len) {
+                        view.file = i;
+                        view.files_focused = true;
+                    }
+                }
+            }
+            // Menu items are filled in once git actions exist; until then menus are empty.
+            Command::OpenMenu => {
+                if self.row(self.selected).is_some() {
+                    self.menu = Some(Menu::new(Vec::new(), None, Hit::Row(self.selected)));
+                }
+            }
+            Command::OpenMenuAt { pos, hit } => {
+                if let Hit::Row(row) | Hit::Label { row, .. } = hit {
+                    if row < self.row_count() {
+                        self.select_row(row);
+                        self.menu = Some(Menu::new(Vec::new(), Some(pos), hit));
+                    }
+                }
+            }
+            Command::MenuUp => {
+                if let Some(menu) = &mut self.menu {
+                    menu.up();
+                }
+            }
+            Command::MenuDown => {
+                if let Some(menu) = &mut self.menu {
+                    menu.down();
+                }
+            }
+            Command::MenuSelect => {
+                // Running the chosen item comes with the git actions.
+                if self.menu.as_ref().is_some_and(|m| m.chosen().is_some()) {
+                    self.menu = None;
+                }
+            }
+            Command::MenuPick(i) => {
+                if let Some(menu) = &mut self.menu {
+                    if menu.items.get(i).is_some_and(|item| item.enabled) {
+                        menu.selected = Some(i);
+                        return self.apply(Command::MenuSelect);
+                    }
+                }
+            }
+            Command::MenuClose => self.menu = None,
+            // Dialog input is handled above while one is open; resolve() replaced
+            // Activate/Back; Fetch and Help are not connected yet.
+            Command::DialogAccept
+            | Command::DialogCancel
+            | Command::DialogChar(_)
+            | Command::DialogBackspace
+            | Command::Activate
+            | Command::Back
+            | Command::Fetch
+            | Command::Help => {}
         }
         self.follow_selection();
         Ok(())
@@ -320,6 +418,46 @@ impl App {
         Ok(true)
     }
 
+    /// Turns the context-dependent `Activate`/`Back` into the command they mean now.
+    pub fn resolve(&self, cmd: Command) -> Command {
+        match cmd {
+            Command::Activate if self.detail_open() => Command::FocusFiles,
+            Command::Activate => Command::OpenDetail,
+            Command::Back if self.detail_open() => Command::CloseDetail,
+            Command::Back => Command::Quit,
+            c => c,
+        }
+    }
+
+    /// Where input goes: an open dialog, then an open menu, then the focused view.
+    pub fn input_mode(&self) -> InputMode {
+        if self.dialog.is_some() {
+            InputMode::Dialog
+        } else if self.menu.is_some() {
+            InputMode::Menu
+        } else {
+            match self.focus() {
+                Focus::Table => InputMode::Graph,
+                Focus::Files => InputMode::Detail,
+                Focus::Diff => InputMode::Diff,
+            }
+        }
+    }
+
+    /// Shows a modal dialog, closing any open menu.
+    pub fn open_dialog(&mut self, dialog: Dialog) {
+        self.menu = None;
+        self.dialog = Some(DialogState::new(dialog));
+    }
+
+    pub fn dialog(&self) -> Option<&DialogState> {
+        self.dialog.as_ref()
+    }
+
+    pub fn menu(&self) -> Option<&Menu> {
+        self.menu.as_ref()
+    }
+
     pub fn focus(&self) -> Focus {
         match &self.detail {
             Some(view) if view.diff.is_some() => Focus::Diff,
@@ -345,6 +483,16 @@ impl App {
 
     pub fn should_quit(&self) -> bool {
         self.quit
+    }
+
+    /// Selects row `i` and gives the table the focus.
+    fn select_row(&mut self, i: usize) {
+        if i < self.row_count() {
+            self.selected = i;
+            if let Some(view) = &mut self.detail {
+                view.files_focused = false;
+            }
+        }
     }
 
     fn current_target(&self) -> Option<DetailTarget> {

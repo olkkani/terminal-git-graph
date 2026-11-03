@@ -14,11 +14,7 @@ use crate::ui::theme;
 const SHORT_HASH: usize = 7;
 
 pub(crate) fn draw(app: &App, view: &DetailView, frame: &mut Frame, area: Rect) {
-    let title = match &view.target {
-        DetailTarget::Commit(hash) => format!(" Commit {} ", short(hash)),
-        DetailTarget::Uncommitted => " Uncommitted changes ".to_string(),
-    };
-    let block = Block::new().borders(Borders::TOP).title(title);
+    let block = block(view);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -44,9 +40,8 @@ pub(crate) fn draw(app: &App, view: &DetailView, frame: &mut Frame, area: Rect) 
         }
     }
 
-    // Scroll just enough to keep the selected file in view.
     let height = inner.height as usize;
-    let offset = selected_line.map_or(0, |l| (l + 1).saturating_sub(height));
+    let offset = scroll_offset(selected_line, height);
     for (n, line) in lines.iter().skip(offset).take(height).enumerate() {
         let y = inner.y + n as u16;
         let row = Rect {
@@ -57,6 +52,37 @@ pub(crate) fn draw(app: &App, view: &DetailView, frame: &mut Frame, area: Rect) 
         frame.buffer_mut().set_style(row, line.style);
         frame.buffer_mut().set_line(inner.x, y, line, inner.width);
     }
+}
+
+/// Index of the file listed at `pos` in the detail drawn in `area`.
+pub(crate) fn file_at(app: &App, view: &DetailView, area: Rect, pos: (u16, u16)) -> Option<usize> {
+    let inner = block(view).inner(area);
+    let (x, y) = pos;
+    if x < inner.x || x >= inner.right() || y < inner.y || y >= inner.bottom() {
+        return None;
+    }
+    let files = view.files()?;
+    // The file list follows the header lines and the "Files (n)" line.
+    let first = header_lines(app, view).len() + 1;
+    let offset = scroll_offset(
+        (!files.is_empty()).then_some(first + view.file),
+        inner.height as usize,
+    );
+    let i = (offset + (y - inner.y) as usize).checked_sub(first)?;
+    (i < files.len()).then_some(i)
+}
+
+fn block(view: &DetailView) -> Block<'static> {
+    let title = match &view.target {
+        DetailTarget::Commit(hash) => format!(" Commit {} ", short(hash)),
+        DetailTarget::Uncommitted => " Uncommitted changes ".to_string(),
+    };
+    Block::new().borders(Borders::TOP).title(title)
+}
+
+/// First line shown: scrolled just enough to keep the selected file's line in view.
+fn scroll_offset(selected_line: Option<usize>, height: usize) -> usize {
+    selected_line.map_or(0, |l| (l + 1).saturating_sub(height))
 }
 
 fn header_lines(app: &App, view: &DetailView) -> Vec<Line<'static>> {

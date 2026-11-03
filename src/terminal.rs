@@ -3,21 +3,22 @@
 use std::error::Error;
 use std::io::{self, stdout, Stdout};
 use std::sync::mpsc::Receiver;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::cursor::Show;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEvent, KeyEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::app::{App, Command, Focus};
+use crate::app::{App, Command};
+use crate::input::{mouse_command, translate_key, ClickTracker};
 use crate::watch::WatchEvent;
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
@@ -56,6 +57,7 @@ fn event_loop(
     app: &mut App,
     watch: &Receiver<WatchEvent>,
 ) -> Result<(), Box<dyn Error>> {
+    let mut clicks = ClickTracker::new();
     while !app.should_quit() {
         term.draw(|f| app.draw(f))?;
         // Draw the detail header first, then read the files and redraw.
@@ -75,11 +77,11 @@ fn event_loop(
         }
         let cmd = match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => key_command(key, app),
-            Event::Mouse(m) => match m.kind {
-                MouseEventKind::ScrollUp => Some(up(app)),
-                MouseEventKind::ScrollDown => Some(down(app)),
-                _ => None,
-            },
+            Event::Mouse(m) => {
+                let size = term.size()?;
+                let area = Rect::new(0, 0, size.width, size.height);
+                mouse_command(app, area, m, &mut clicks, Instant::now())
+            }
             _ => None,
         };
         if let Some(cmd) = cmd {
@@ -89,67 +91,7 @@ fn event_loop(
     Ok(())
 }
 
-fn up(app: &App) -> Command {
-    match app.focus() {
-        Focus::Table => Command::Up,
-        Focus::Files => Command::FileUp,
-        Focus::Diff => Command::DiffScrollUp,
-    }
-}
-
-fn down(app: &App) -> Command {
-    match app.focus() {
-        Focus::Table => Command::Down,
-        Focus::Files => Command::FileDown,
-        Focus::Diff => Command::DiffScrollDown,
-    }
-}
-
-/// Maps a key press to a command; arrows, paging keys, Enter and Esc depend on the
-/// focused view.
+/// Maps a key press to the command it means for the app's current input mode.
 pub fn key_command(key: KeyEvent, app: &App) -> Option<Command> {
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        return Some(Command::Quit);
-    }
-    Some(match key.code {
-        KeyCode::Char('q') => Command::Quit,
-        KeyCode::Esc => match app.focus() {
-            Focus::Diff => Command::CloseDiff,
-            _ if app.detail_open() => Command::CloseDetail,
-            _ => Command::Quit,
-        },
-        KeyCode::Enter => match app.focus() {
-            Focus::Table if app.detail_open() => Command::FocusFiles,
-            Focus::Table => Command::OpenDetail,
-            Focus::Files => Command::OpenDiff,
-            Focus::Diff => return None,
-        },
-        KeyCode::Tab if app.detail_open() => Command::FocusFiles,
-        KeyCode::Up | KeyCode::Char('k') => up(app),
-        KeyCode::Down | KeyCode::Char('j') => down(app),
-        KeyCode::PageUp => match app.focus() {
-            Focus::Table => Command::PageUp,
-            Focus::Files => Command::FileTop,
-            Focus::Diff => Command::DiffPageUp,
-        },
-        KeyCode::PageDown => match app.focus() {
-            Focus::Table => Command::PageDown,
-            Focus::Files => Command::FileBottom,
-            Focus::Diff => Command::DiffPageDown,
-        },
-        KeyCode::Home | KeyCode::Char('g') => match app.focus() {
-            Focus::Table => Command::Top,
-            Focus::Files => Command::FileTop,
-            Focus::Diff => Command::DiffTop,
-        },
-        KeyCode::End | KeyCode::Char('G') => match app.focus() {
-            Focus::Table => Command::Bottom,
-            Focus::Files => Command::FileBottom,
-            Focus::Diff => Command::DiffBottom,
-        },
-        KeyCode::Char('a') => Command::ToggleScope,
-        KeyCode::Char('r') => Command::ToggleRemotes,
-        KeyCode::F(5) | KeyCode::Char('R') => Command::Refresh,
-        _ => return None,
-    })
+    translate_key(key, app.input_mode()).map(|cmd| app.resolve(cmd))
 }

@@ -10,6 +10,7 @@ use ratatui::Frame;
 use crate::app::{App, Row};
 use crate::git::refs::{Head, RefKind, RefLabel};
 use crate::graph::render::{render_row, render_uncommitted, Cell, RenderOpts};
+use crate::input::Hit;
 use crate::ui::layout::{columns_for, display_width, fit_to_width, truncate_to_width};
 use crate::ui::theme;
 
@@ -43,47 +44,17 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
         );
         return;
     }
-    let height = area.height as usize;
-    let visible = visible_rows(app, height);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
     let head = app.head_hash();
-    let head_lane = app
-        .commits
-        .iter()
-        .position(|c| Some(c.hash.as_str()) == head)
-        .map_or(0, |i| app.graph[i].lane);
-
-    let graphs: Vec<Vec<Cell>> = visible
-        .clone()
-        .map(|i| match app.row(i) {
-            Some(Row::Commit(c)) => render_row(
-                &app.graph[c],
-                &RenderOpts {
-                    is_head: Some(app.commits[c].hash.as_str()) == head,
-                    ascii: false,
-                },
-            ),
-            _ => render_uncommitted(head_lane, head_lane + 1, false),
-        })
-        .collect();
-
-    let width = area.width as usize;
     let cols = columns_for(area.width);
-    let graph_w = graphs
-        .iter()
-        .map(Vec::len)
-        .max()
-        .unwrap_or(0)
-        .min(width / 3);
-    let fixed = graph_w
-        + 1
-        + 1
-        + DATE_W
-        + if cols.author { 1 + AUTHOR_W } else { 0 }
-        + if cols.hash { 1 + HASH_W } else { 0 };
-    let desc_w = width.saturating_sub(fixed);
+    let RowsLayout {
+        visible,
+        graphs,
+        graph_w,
+        desc_w,
+    } = rows_layout(app, area);
 
     for (n, (i, cells)) in visible.zip(graphs).enumerate() {
         let y = area.y + n as u16;
@@ -103,7 +74,7 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
                     bg = Some(theme::head_bg(app.depth));
                 }
                 let labels = app.refs.labels_for(&commit.hash);
-                let (badges, used) = badge_spans(app, &labels, g.color, desc_w / 2);
+                let (badges, used, _) = badge_spans(app, &labels, g.color, desc_w / 2);
                 spans.extend(badges);
                 let subject_style = if g.is_merge {
                     Style::new().add_modifier(Modifier::DIM)
@@ -149,6 +120,88 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
             .buffer_mut()
             .set_line(area.x, y, &Line::from(spans).style(style), area.width);
     }
+}
+
+/// Rows in view and the column widths they are drawn with.
+struct RowsLayout {
+    visible: std::ops::Range<usize>,
+    graphs: Vec<Vec<Cell>>,
+    graph_w: usize,
+    /// Width shared by the labels and the subject.
+    desc_w: usize,
+}
+
+fn rows_layout(app: &App, area: Rect) -> RowsLayout {
+    let visible = visible_rows(app, area.height as usize);
+    let head = app.head_hash();
+    let head_lane = app
+        .commits
+        .iter()
+        .position(|c| Some(c.hash.as_str()) == head)
+        .map_or(0, |i| app.graph[i].lane);
+
+    let graphs: Vec<Vec<Cell>> = visible
+        .clone()
+        .map(|i| match app.row(i) {
+            Some(Row::Commit(c)) => render_row(
+                &app.graph[c],
+                &RenderOpts {
+                    is_head: Some(app.commits[c].hash.as_str()) == head,
+                    ascii: false,
+                },
+            ),
+            _ => render_uncommitted(head_lane, head_lane + 1, false),
+        })
+        .collect();
+
+    let width = area.width as usize;
+    let cols = columns_for(area.width);
+    let graph_w = graphs
+        .iter()
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0)
+        .min(width / 3);
+    let fixed = graph_w
+        + 1
+        + 1
+        + DATE_W
+        + if cols.author { 1 + AUTHOR_W } else { 0 }
+        + if cols.hash { 1 + HASH_W } else { 0 };
+    let desc_w = width.saturating_sub(fixed);
+
+    RowsLayout {
+        visible,
+        graphs,
+        graph_w,
+        desc_w,
+    }
+}
+
+/// What is at `pos` in the table drawn in `area`: a ref label or else the row.
+pub(crate) fn hit(app: &App, area: Rect, pos: (u16, u16)) -> Option<Hit> {
+    let (x, y) = pos;
+    if x < area.x || x >= area.right() || y < area.y || y >= area.bottom() {
+        return None;
+    }
+    let layout = rows_layout(app, area);
+    let i = layout.visible.start + (y - area.y) as usize;
+    if !layout.visible.contains(&i) {
+        return None;
+    }
+    if let Some(Row::Commit(c)) = app.row(i) {
+        let labels = app.refs.labels_for(&app.commits[c].hash);
+        let (_, _, places) = badge_spans(app, &labels, app.graph[c].color, layout.desc_w / 2);
+        // Badges start after the graph and one space.
+        let col = (x - area.x) as usize;
+        let start = layout.graph_w + 1;
+        for (index, cells) in places {
+            if (start + cells.start..start + cells.end).contains(&col) {
+                return Some(Hit::Label { row: i, index });
+            }
+        }
+    }
+    Some(Hit::Row(i))
 }
 
 /// Indices of the rows in view, scrolling just enough to keep the selection visible.
@@ -203,17 +256,22 @@ fn label_text(app: &App, label: &RefLabel) -> String {
     }
 }
 
-/// Badge spans within `budget` columns (cut with '…' when they don't fit) and their width.
+/// Places of the drawn badges: index into the row's labels and the cells it covers.
+type BadgePlaces = Vec<(usize, std::ops::Range<usize>)>;
+
+/// Badge spans within `budget` columns (cut with '…' when they don't fit), their width
+/// and where each badge sits relative to the first.
 fn badge_spans(
     app: &App,
     labels: &[&RefLabel],
     color: usize,
     budget: usize,
-) -> (Vec<Span<'static>>, usize) {
+) -> (Vec<Span<'static>>, usize, BadgePlaces) {
     let lane = theme::lane_color(color, app.depth);
     let mut spans = Vec::new();
     let mut used = 0;
-    for label in labels {
+    let mut places = Vec::new();
+    for (index, label) in labels.iter().enumerate() {
         if label.kind == RefKind::RemoteBranch && !app.remotes {
             continue;
         }
@@ -229,18 +287,21 @@ fn badge_spans(
         let w = display_width(&text);
         let remaining = budget - used;
         if w < remaining {
+            places.push((index, used..used + w));
             spans.push(Span::styled(text, style));
             spans.push(Span::raw(" "));
             used += w + 1;
         } else {
             let cut = truncate_to_width(&text, remaining.saturating_sub(1));
             if !cut.is_empty() {
-                used += display_width(&cut) + 1;
+                let w = display_width(&cut);
+                places.push((index, used..used + w));
+                used += w + 1;
                 spans.push(Span::styled(cut, style));
                 spans.push(Span::raw(" "));
             }
             break;
         }
     }
-    (spans, used)
+    (spans, used, places)
 }
