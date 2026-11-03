@@ -14,6 +14,7 @@ use crate::git::{Git, GitError};
 use crate::graph::lanes::{GraphRow, LaneBuilder};
 use crate::ui;
 use crate::ui::theme::ColorDepth;
+use crate::watch::WatchEvent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -278,6 +279,27 @@ impl App {
         Ok(())
     }
 
+    /// Applies a filesystem change: refs reload the first page keeping the selected
+    /// commit; working-tree edits refresh only the status.
+    pub fn on_watch(&mut self, ev: WatchEvent) -> Result<(), GitError> {
+        match ev {
+            WatchEvent::RefsChanged => self.reload()?,
+            WatchEvent::WorktreeChanged => {
+                if self.bare {
+                    return Ok(());
+                }
+                // Keep the same row selected when the uncommitted row appears or goes.
+                let before = usize::from(self.has_uncommitted());
+                self.status = load_status(&self.git)?;
+                let after = usize::from(self.has_uncommitted());
+                self.selected = (self.selected + after).saturating_sub(before);
+                self.invalidate_uncommitted_detail();
+            }
+        }
+        self.follow_selection();
+        Ok(())
+    }
+
     /// Reads a detail that is still loading. The event loop calls this after drawing,
     /// so the detail header shows before the file list. Returns whether anything loaded.
     pub fn load_pending(&mut self) -> Result<bool, GitError> {
@@ -428,14 +450,18 @@ impl App {
         self.selected = keep
             .and_then(|h| self.commits.iter().position(|c| c.hash == h))
             .map_or(0, |i| i + usize::from(self.has_uncommitted()));
+        self.invalidate_uncommitted_detail();
+        Ok(())
+    }
+
+    /// Re-reads an open uncommitted detail on the next load: the working tree may have changed.
+    fn invalidate_uncommitted_detail(&mut self) {
         if let Some(view) = &mut self.detail {
-            // Re-read on the next load: the working tree may have changed.
             if view.target == DetailTarget::Uncommitted {
                 view.data = DetailData::Loading;
                 view.diff = None;
             }
         }
-        Ok(())
     }
 
     fn load_page(&mut self) -> Result<(), GitError> {

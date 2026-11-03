@@ -2,6 +2,8 @@
 
 use std::error::Error;
 use std::io::{self, stdout, Stdout};
+use std::sync::mpsc::Receiver;
+use std::time::Duration;
 
 use crossterm::cursor::Show;
 use crossterm::event::{
@@ -16,6 +18,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use crate::app::{App, Command, Focus};
+use crate::watch::WatchEvent;
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -36,19 +39,38 @@ pub fn restore() -> io::Result<()> {
     execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen, Show)
 }
 
-/// Runs the app until it quits, always restoring the terminal.
-pub fn run(app: &mut App) -> Result<(), Box<dyn Error>> {
+/// How long to wait for input before checking the watch channel again.
+const INPUT_POLL: Duration = Duration::from_millis(50);
+
+/// Runs the app until it quits, always restoring the terminal. Filesystem changes
+/// arriving on `watch` refresh the view.
+pub fn run(app: &mut App, watch: &Receiver<WatchEvent>) -> Result<(), Box<dyn Error>> {
     let mut term = enter()?;
-    let result = event_loop(&mut term, app);
+    let result = event_loop(&mut term, app, watch);
     restore()?;
     result
 }
 
-fn event_loop(term: &mut Tui, app: &mut App) -> Result<(), Box<dyn Error>> {
+fn event_loop(
+    term: &mut Tui,
+    app: &mut App,
+    watch: &Receiver<WatchEvent>,
+) -> Result<(), Box<dyn Error>> {
     while !app.should_quit() {
         term.draw(|f| app.draw(f))?;
         // Draw the detail header first, then read the files and redraw.
         if app.load_pending()? {
+            continue;
+        }
+        // Wait for either input or a filesystem change; a change redraws.
+        let mut changed = false;
+        while !changed && !event::poll(INPUT_POLL)? {
+            for ev in watch.try_iter() {
+                app.on_watch(ev)?;
+                changed = true;
+            }
+        }
+        if changed {
             continue;
         }
         let cmd = match event::read()? {
