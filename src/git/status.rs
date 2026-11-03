@@ -60,6 +60,11 @@ pub fn parse_status_v2(out: &str) -> WorkStatus {
 }
 
 pub fn load_status(git: &Git) -> Result<WorkStatus, GitError> {
-    let out = git.run(&["status", "--porcelain=v2", "--branch"])?;
+    let out = git.run(&[
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v2",
+        "--branch",
+    ])?;
     Ok(parse_status_v2(&out))
 }

@@ -86,3 +86,32 @@ fn load_status_on_real_repo() {
     assert_eq!((s.unstaged, s.untracked), (1, 1));
     assert_eq!(s.branch.as_deref(), Some("main"));
 }
+
+/// A repo whose index has stale stat data for file-1.txt, so plain `git status` would
+/// refresh and rewrite `.git/index`.
+fn repo_with_stale_index() -> TestRepo {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(repo.path().join("file-1.txt"), "first\n").unwrap();
+    repo
+}
+
+#[test]
+fn status_reads_do_not_rewrite_the_index() {
+    let repo = repo_with_stale_index();
+    let index = repo.path().join(".git").join("index");
+    let before = std::fs::read(&index).unwrap();
+    let git = Git::at(repo.path());
+    load_status(&git).unwrap();
+    terminal_git_graph::git::detail::load_worktree_changes(&git).unwrap();
+    let tracked = terminal_git_graph::git::detail::FileChange {
+        path: "file-1.txt".to_string(),
+        status: 'M',
+        added: None,
+        deleted: None,
+    };
+    terminal_git_graph::git::detail::load_worktree_diff(&git, &tracked).unwrap();
+    assert_eq!(std::fs::read(&index).unwrap(), before);
+    assert!(!repo.path().join(".git").join("index.lock").exists());
+}

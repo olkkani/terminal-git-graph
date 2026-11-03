@@ -129,16 +129,25 @@ pub fn load_file_diff(git: &Git, hash: &str, path: &str) -> Result<String, GitEr
 
 /// Staged, unstaged and untracked changes. A path changed in both areas appears once.
 pub fn load_worktree_changes(git: &Git) -> Result<Vec<FileChange>, GitError> {
-    let status = git.run(&["status", "--porcelain=v1", "-z", "-uall"])?;
+    let status = git.run(&[
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "-uall",
+    ])?;
     // No HEAD yet (fresh repo): counts are simply unavailable.
     let counts = git
+        // Plumbing `diff-index`: porcelain `git diff` rewrites the index even with
+        // --no-optional-locks.
         .run(&[
-            "diff",
+            "--no-optional-locks",
+            "diff-index",
+            "-M",
             "--no-ext-diff",
-            "--no-color",
-            "HEAD",
             "--numstat",
             "-z",
+            "HEAD",
         ])
         .unwrap_or_default();
     let mut count_map: HashMap<String, (Option<u32>, Option<u32>)> = HashMap::new();
@@ -186,11 +195,15 @@ pub fn load_worktree_changes(git: &Git) -> Result<Vec<FileChange>, GitError> {
     Ok(files)
 }
 
-/// Untracked files are read from disk (capped at `MAX_UNTRACKED_BYTES`); tracked ones use `git diff HEAD`.
+/// Untracked files are read from disk (capped at `MAX_UNTRACKED_BYTES`); tracked ones use `git diff-index -p HEAD`.
 pub fn load_worktree_diff(git: &Git, change: &FileChange) -> Result<String, GitError> {
     if change.status != '?' {
+        // Plumbing, so the index is not rewritten (see `load_worktree_changes`).
         return git.run(&[
-            "diff",
+            "--no-optional-locks",
+            "diff-index",
+            "-p",
+            "-M",
             "--no-ext-diff",
             "--no-color",
             "HEAD",
