@@ -83,7 +83,8 @@ fn down(app: &App) -> Command {
     }
 }
 
-/// Maps a key press to a command; arrows, Enter and Esc depend on the focused view.
+/// Maps a key press to a command; arrows, paging keys, Enter and Esc depend on the
+/// focused view.
 pub fn key_command(key: KeyEvent, app: &App) -> Option<Command> {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Some(Command::Quit);
@@ -104,10 +105,26 @@ pub fn key_command(key: KeyEvent, app: &App) -> Option<Command> {
         KeyCode::Tab if app.detail_open() => Command::FocusFiles,
         KeyCode::Up | KeyCode::Char('k') => up(app),
         KeyCode::Down | KeyCode::Char('j') => down(app),
-        KeyCode::PageUp => Command::PageUp,
-        KeyCode::PageDown => Command::PageDown,
-        KeyCode::Home | KeyCode::Char('g') => Command::Top,
-        KeyCode::End | KeyCode::Char('G') => Command::Bottom,
+        KeyCode::PageUp => match app.focus() {
+            Focus::Table => Command::PageUp,
+            Focus::Files => Command::FileTop,
+            Focus::Diff => Command::DiffPageUp,
+        },
+        KeyCode::PageDown => match app.focus() {
+            Focus::Table => Command::PageDown,
+            Focus::Files => Command::FileBottom,
+            Focus::Diff => Command::DiffPageDown,
+        },
+        KeyCode::Home | KeyCode::Char('g') => match app.focus() {
+            Focus::Table => Command::Top,
+            Focus::Files => Command::FileTop,
+            Focus::Diff => Command::DiffTop,
+        },
+        KeyCode::End | KeyCode::Char('G') => match app.focus() {
+            Focus::Table => Command::Bottom,
+            Focus::Files => Command::FileBottom,
+            Focus::Diff => Command::DiffBottom,
+        },
         KeyCode::Char('a') => Command::ToggleScope,
         KeyCode::Char('r') => Command::ToggleRemotes,
         KeyCode::F(5) | KeyCode::Char('R') => Command::Refresh,

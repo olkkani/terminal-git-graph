@@ -245,3 +245,85 @@ fn merge_commit_detail_shows_both_parents() {
     assert!(parents.contains(&side[..7]), "{parents}");
     assert!(out.contains("side.txt"), "{out}");
 }
+
+#[test]
+fn paging_keys_in_diff_scroll_the_diff_and_keep_the_commit() {
+    let repo = TestRepo::new();
+    repo.commit("base");
+    repo.commit("older");
+    let body: String = (1..=50).map(|i| format!("row {i:02}\n")).collect();
+    let head = repo.commit_file("big.txt", &body, "add big");
+    let mut app = app_for(&repo);
+    open_detail(&mut app);
+    app.apply(Command::FocusFiles).unwrap();
+    app.apply(Command::OpenDiff).unwrap();
+    assert!(screen(&app, 60, 20).contains("@@"));
+
+    let cmd = key_command(key(KeyCode::PageDown), &app).unwrap();
+    app.apply(cmd).unwrap();
+    assert_eq!(app.focus(), Focus::Diff);
+    assert_eq!(app.selected_hash(), Some(head.as_str()));
+    let out = screen(&app, 60, 20);
+    assert!(!out.contains("@@") && out.contains("+row"), "{out}");
+
+    let cmd = key_command(key(KeyCode::End), &app).unwrap();
+    app.apply(cmd).unwrap();
+    assert_eq!(app.focus(), Focus::Diff);
+    assert_eq!(app.selected_hash(), Some(head.as_str()));
+    let out = screen(&app, 60, 20);
+    assert!(out.contains("+row 50"), "{out}");
+
+    let cmd = key_command(key(KeyCode::Home), &app).unwrap();
+    app.apply(cmd).unwrap();
+    assert!(screen(&app, 60, 20).contains("@@"));
+
+    app.apply(key_command(key(KeyCode::PageDown), &app).unwrap())
+        .unwrap();
+    app.apply(key_command(key(KeyCode::PageUp), &app).unwrap())
+        .unwrap();
+    assert_eq!(app.selected_hash(), Some(head.as_str()));
+    assert!(screen(&app, 60, 20).contains("@@"));
+}
+
+#[test]
+fn paging_keys_in_files_jump_to_first_and_last_file() {
+    let repo = TestRepo::new();
+    repo.commit("base");
+    repo.commit("older");
+    for (name, text) in [
+        ("a.txt", "alpha\n"),
+        ("b.txt", "bravo\n"),
+        ("c.txt", "charlie\n"),
+    ] {
+        std::fs::write(repo.path().join(name), text).unwrap();
+    }
+    repo.git(&["add", "--", "a.txt", "b.txt", "c.txt"]);
+    repo.git(&["commit", "-m", "three files"]);
+    let head = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+    let mut app = app_for(&repo);
+    open_detail(&mut app);
+    app.apply(Command::FocusFiles).unwrap();
+
+    app.apply(key_command(key(KeyCode::PageDown), &app).unwrap())
+        .unwrap();
+    assert_eq!(app.focus(), Focus::Files);
+    assert_eq!(app.selected_hash(), Some(head.as_str()));
+    app.apply(Command::OpenDiff).unwrap();
+    assert!(screen(&app, 60, 20).contains("+charlie"));
+    app.apply(Command::CloseDiff).unwrap();
+
+    app.apply(key_command(key(KeyCode::Home), &app).unwrap())
+        .unwrap();
+    assert_eq!(app.selected_hash(), Some(head.as_str()));
+    app.apply(Command::OpenDiff).unwrap();
+    assert!(screen(&app, 60, 20).contains("+alpha"));
+    app.apply(Command::CloseDiff).unwrap();
+
+    app.apply(key_command(key(KeyCode::End), &app).unwrap())
+        .unwrap();
+    app.apply(key_command(key(KeyCode::PageUp), &app).unwrap())
+        .unwrap();
+    assert_eq!(app.selected_hash(), Some(head.as_str()));
+    app.apply(Command::OpenDiff).unwrap();
+    assert!(screen(&app, 60, 20).contains("+alpha"));
+}

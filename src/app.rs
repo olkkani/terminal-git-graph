@@ -36,11 +36,18 @@ pub enum Command {
     FocusFiles,
     FileUp,
     FileDown,
+    FileTop,
+    FileBottom,
     /// Opens the diff of the selected file.
     OpenDiff,
     CloseDiff,
     DiffScrollUp,
     DiffScrollDown,
+    /// Scrolls the diff by its visible height.
+    DiffPageUp,
+    DiffPageDown,
+    DiffTop,
+    DiffBottom,
 }
 
 /// Where keyboard input goes.
@@ -213,6 +220,17 @@ impl App {
                     view.file = (view.file + 1).min(count.saturating_sub(1));
                 }
             }
+            Command::FileTop => {
+                if let Some(view) = &mut self.detail {
+                    view.file = 0;
+                }
+            }
+            Command::FileBottom => {
+                if let Some(view) = &mut self.detail {
+                    let count = view.files().map_or(0, <[FileChange]>::len);
+                    view.file = count.saturating_sub(1);
+                }
+            }
             Command::OpenDiff => self.open_diff()?,
             Command::CloseDiff => {
                 if let Some(view) = &mut self.detail {
@@ -229,6 +247,30 @@ impl App {
                 if let Some(diff) = self.detail.as_mut().and_then(|v| v.diff.as_mut()) {
                     let max = diff.lines.len().saturating_sub(height);
                     diff.scroll = (diff.scroll + 1).min(max);
+                }
+            }
+            Command::DiffPageUp => {
+                let height = self.diff_height.get().max(1);
+                if let Some(diff) = self.detail.as_mut().and_then(|v| v.diff.as_mut()) {
+                    diff.scroll = diff.scroll.saturating_sub(height);
+                }
+            }
+            Command::DiffPageDown => {
+                let height = self.diff_height.get();
+                if let Some(diff) = self.detail.as_mut().and_then(|v| v.diff.as_mut()) {
+                    let max = diff.lines.len().saturating_sub(height);
+                    diff.scroll = (diff.scroll + height.max(1)).min(max);
+                }
+            }
+            Command::DiffTop => {
+                if let Some(diff) = self.detail.as_mut().and_then(|v| v.diff.as_mut()) {
+                    diff.scroll = 0;
+                }
+            }
+            Command::DiffBottom => {
+                let height = self.diff_height.get();
+                if let Some(diff) = self.detail.as_mut().and_then(|v| v.diff.as_mut()) {
+                    diff.scroll = diff.lines.len().saturating_sub(height);
                 }
             }
         }
