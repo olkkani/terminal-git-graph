@@ -167,11 +167,12 @@ fn click_on_row_selects_it() {
     let (repo, hashes) = three_commits();
     let mut app = app_for(&repo);
     render(&app, W, H);
-    // Header on screen row 0, so table row 2 is screen row 3; x is inside the subject.
-    let pos = (40, 3);
+    // Header on screen row 0 and the column header on row 1, so table row 2 is screen
+    // row 4; x is inside the subject.
+    let pos = (40, 4);
     assert_eq!(hit_test(&app, screen_area(), pos), Some(Hit::Row(2)));
     // Below the last row there is nothing to hit.
-    assert_eq!(hit_test(&app, screen_area(), (40, 4)), None);
+    assert_eq!(hit_test(&app, screen_area(), (40, 5)), None);
 
     let mut clicks = ClickTracker::new();
     let now = Instant::now();
@@ -195,8 +196,8 @@ fn double_click_on_label_activates_that_label() {
     repo.branch("alpha");
     let app = app_for(&repo);
     let rows = render(&app, W, H);
-    let byte = rows[1].find("alpha").expect("alpha label");
-    let pos = (rows[1][..byte].width() as u16, 1);
+    let byte = rows[2].find("alpha").expect("alpha label");
+    let pos = (rows[2][..byte].width() as u16, 2);
     let hit = hit_test(&app, screen_area(), pos);
     let Some(Hit::Label { row, index }) = hit else {
         panic!("expected a label at {pos:?}, got {hit:?}");
@@ -218,8 +219,9 @@ fn double_click_on_label_activates_that_label() {
 fn click_on_label_targets_that_label() {
     let repo = TestRepo::new();
     let hash = repo.commit("first");
-    repo.branch("alpha");
-    repo.branch("beta");
+    // Short names so all three badges fit next to the graph column.
+    repo.branch("dev");
+    repo.branch("fix");
     let app = app_for(&repo);
     let rows = render(&app, W, H);
     let refs = load_refs(&Git::at(repo.path())).unwrap();
@@ -230,7 +232,7 @@ fn click_on_label_targets_that_label() {
         .collect();
     assert_eq!(names.len(), 3, "{names:?}");
 
-    let row = &rows[1];
+    let row = &rows[2];
     for (index, name) in names.iter().enumerate() {
         let byte = row
             .find(name)
@@ -239,7 +241,7 @@ fn click_on_label_targets_that_label() {
         // First and last cell of the badge.
         for x in [x, x + name.len() as u16 - 1] {
             assert_eq!(
-                hit_test(&app, screen_area(), (x, 1)),
+                hit_test(&app, screen_area(), (x, 2)),
                 Some(Hit::Label { row: 0, index }),
                 "{name} at x={x} in {row:?}"
             );
@@ -249,13 +251,13 @@ fn click_on_label_targets_that_label() {
     let second = row.find(names[1]).unwrap();
     let x = row[..second].width() as u16 + 1;
     assert_eq!(
-        hit_test(&app, screen_area(), (x, 1)),
+        hit_test(&app, screen_area(), (x, 2)),
         Some(Hit::Label { row: 0, index: 1 })
     );
     // The subject after the badges is the row itself.
     let subject = row.find("first").unwrap();
     assert_eq!(
-        hit_test(&app, screen_area(), (row[..subject].width() as u16, 1)),
+        hit_test(&app, screen_area(), (row[..subject].width() as u16, 2)),
         Some(Hit::Row(0))
     );
 }
@@ -266,19 +268,19 @@ fn right_click_opens_menu_at_position() {
     let mut app = app_for(&repo);
     render(&app, W, H);
     let mut clicks = ClickTracker::new();
-    let ev = mouse(MouseEventKind::Down(MouseButton::Right), 30, 2);
+    let ev = mouse(MouseEventKind::Down(MouseButton::Right), 30, 3);
     let cmd = mouse_command(&app, screen_area(), ev, &mut clicks, Instant::now());
     assert_eq!(
         cmd,
         Some(Command::OpenMenuAt {
-            pos: (30, 2),
+            pos: (30, 3),
             hit: Hit::Row(1)
         })
     );
     app.apply(cmd.unwrap()).unwrap();
     assert_eq!(app.input_mode(), InputMode::Menu);
     let menu = app.menu().expect("menu open");
-    assert_eq!(menu.anchor, Some((30, 2)));
+    assert_eq!(menu.anchor, Some((30, 3)));
     assert_eq!(menu.target, Hit::Row(1));
     // The clicked row becomes the selection.
     assert_eq!(app.selected_hash(), Some(hashes[1].as_str()));

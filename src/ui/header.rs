@@ -16,39 +16,17 @@ use crate::ui::layout::{display_width, truncate_to_width};
 const REFRESH_ERROR_MAX: usize = 40;
 
 pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
-    let width = area.width as usize;
-    let nav = nav_spans(app, width);
-    let nav_w = spans_width(&nav);
-    let (mut spans, used) = left_spans(app, width - nav_w);
-    let used = used + nav_w;
-    spans.splice(0..0, nav.into_iter().map(|(s, _)| s));
-    if let Some(toolbar) = toolbar(app, width - used) {
-        let toolbar_w: usize = toolbar.iter().map(|(s, _)| display_width(&s.content)).sum();
-        spans.push(Span::raw(" ".repeat(width - used - toolbar_w)));
-        spans.extend(toolbar.into_iter().map(|(s, _)| s));
-    }
+    let spans: Vec<Span> = pieces(app, area.width as usize)
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect();
     frame.render_widget(Line::from(spans), area);
 }
 
 /// The toolbar button at column `x` of the header drawn in `area`.
 pub(crate) fn button_at(app: &App, area: Rect, x: u16) -> Option<ToolbarButton> {
-    let width = area.width as usize;
-    let nav = nav_spans(app, width);
-    let nav_w = spans_width(&nav);
     let mut start = area.x as usize;
-    for (span, button) in nav {
-        let end = start + display_width(&span.content);
-        if (start..end).contains(&(x as usize)) {
-            return button;
-        }
-        start = end;
-    }
-    let (_, used) = left_spans(app, width - nav_w);
-    let used = used + nav_w;
-    let toolbar = toolbar(app, width - used)?;
-    let toolbar_w: usize = toolbar.iter().map(|(s, _)| display_width(&s.content)).sum();
-    let mut start = area.x as usize + width - toolbar_w;
-    for (span, button) in toolbar {
+    for (span, button) in pieces(app, area.width as usize) {
         let end = start + display_width(&span.content);
         if (start..end).contains(&(x as usize)) {
             return button;
@@ -56,6 +34,25 @@ pub(crate) fn button_at(app: &App, area: Rect, x: u16) -> Option<ToolbarButton> 
         start = end;
     }
     None
+}
+
+/// A piece of the header line and the button it belongs to.
+type Piece = (Span<'static>, Option<ToolbarButton>);
+
+/// The whole header line, `width` cells wide: navigation, branch and status on the
+/// left, then the scope and remotes controls, and the commit count and Fetch on the right.
+fn pieces(app: &App, width: usize) -> Vec<Piece> {
+    let mut line = nav_spans(app, width);
+    let nav_w = spans_width(&line);
+    let (left, left_w) = left_spans(app, width - nav_w);
+    line.extend(left.into_iter().map(|s| (s, None)));
+    let room = width - nav_w - left_w;
+    let (controls, right) = toolbar(app, room);
+    let pad = room - spans_width(&controls) - spans_width(&right);
+    line.extend(controls);
+    line.push((Span::raw(" ".repeat(pad)), None));
+    line.extend(right);
+    line
 }
 
 /// Column where the repository name starts, when the graph was opened from Manygit.
@@ -66,13 +63,13 @@ pub(crate) fn repo_name_x(app: &App) -> Option<u16> {
 
 const BACK: &str = "‹ Manygit ";
 
-fn spans_width(spans: &[(Span, Option<ToolbarButton>)]) -> usize {
+fn spans_width(spans: &[Piece]) -> usize {
     spans.iter().map(|(s, _)| display_width(&s.content)).sum()
 }
 
 /// "‹ Manygit" and the repository name (with a dropdown mark) when the graph was opened
 /// from the Manygit list, cut to `width`.
-fn nav_spans(app: &App, width: usize) -> Vec<(Span<'static>, Option<ToolbarButton>)> {
+fn nav_spans(app: &App, width: usize) -> Vec<Piece> {
     let Some(name) = app.repo_name() else {
         return Vec::new();
     };
@@ -90,19 +87,13 @@ fn nav_spans(app: &App, width: usize) -> Vec<(Span<'static>, Option<ToolbarButto
     ]
 }
 
-/// Branch, commit count and refresh error, with their width.
+/// Branch, running job and refresh error, with their width.
 fn left_spans(app: &App, width: usize) -> (Vec<Span<'static>>, usize) {
     let branch = match &app.refs.head {
         Head::Branch(name) | Head::Unborn(name) => name.clone(),
         Head::Detached(hash) => format!("detached {}", &hash[..hash.len().min(7)]),
     };
-    let loaded = app.commits.len();
-    let count = if loaded >= app.total {
-        format!("{loaded} commit{}", if loaded == 1 { "" } else { "s" })
-    } else {
-        format!("{loaded}/{} commits", app.total)
-    };
-    let left = truncate_to_width(&format!("{branch}  {count}"), width);
+    let left = truncate_to_width(&branch, width);
     let mut used = display_width(&left);
     let mut spans = vec![Span::styled(
         left,
@@ -125,34 +116,57 @@ fn left_spans(app: &App, width: usize) -> (Vec<Span<'static>>, usize) {
     (spans, used)
 }
 
-/// Toolbar pieces with the button each belongs to, when they fit in `room` cells
-/// (keeping one space before them). Fetch is left out first when space is short.
-fn toolbar(app: &App, room: usize) -> Option<Vec<(Span<'static>, Option<ToolbarButton>)>> {
-    let toggle = |label: &'static str, on: bool, button: ToolbarButton| {
+/// The controls (after the left part) and the commit count with Fetch (right-aligned),
+/// when they fit in `room` cells keeping a space before each group. Fetch is left out
+/// first when space is short, then the controls, then the count.
+fn toolbar(app: &App, room: usize) -> (Vec<Piece>, Vec<Piece>) {
+    let segment = |label: &'static str, on: bool| {
         let style = if on {
             Style::new().add_modifier(Modifier::REVERSED)
         } else {
             Style::new()
         };
-        (Span::styled(format!(" {label} "), style), Some(button))
+        (
+            Span::styled(format!(" {label} "), style),
+            Some(ToolbarButton::Scope),
+        )
     };
-    let mut toolbar = vec![
-        (Span::raw(" Fetch "), Some(ToolbarButton::Fetch)),
+    let check = match (app.ascii, app.remotes) {
+        (true, true) => "[x]",
+        (true, false) => "[ ]",
+        (false, true) => "☑",
+        (false, false) => "☐",
+    };
+    let controls = vec![
+        (Span::raw("  "), None),
+        segment("All branches", app.scope == Scope::AllBranches),
+        (Span::raw("|"), Some(ToolbarButton::Scope)),
+        segment("Current", app.scope == Scope::Current),
         (Span::raw(" "), None),
-        toggle("All", app.scope == Scope::AllBranches, ToolbarButton::Scope),
-        toggle("Current", app.scope == Scope::Current, ToolbarButton::Scope),
-        (Span::raw(" "), None),
-        toggle("Remotes", app.remotes, ToolbarButton::Remotes),
+        (
+            Span::raw(format!(" {check} Remotes ")),
+            Some(ToolbarButton::Remotes),
+        ),
     ];
-    let fits = |t: &[(Span, Option<ToolbarButton>)]| {
-        t.iter()
-            .map(|(s, _)| display_width(&s.content))
-            .sum::<usize>()
-            < room
+    let loaded = app.commits.len();
+    let count = if loaded >= app.total {
+        format!("{loaded} commit{}", if loaded == 1 { "" } else { "s" })
+    } else {
+        format!("{loaded}/{} commits", app.total)
     };
-    if fits(&toolbar) {
-        return Some(toolbar);
-    }
-    toolbar.drain(..2);
-    fits(&toolbar).then_some(toolbar)
+    let count = (Span::raw(count), None);
+    let fetch = [
+        (Span::raw(" "), None),
+        (Span::raw(" Fetch "), Some(ToolbarButton::Fetch)),
+    ];
+    let full: Vec<Piece> = std::iter::once(count.clone()).chain(fetch).collect();
+    let options = [
+        (controls.clone(), full),
+        (controls, vec![count.clone()]),
+        (Vec::new(), vec![count]),
+    ];
+    options
+        .into_iter()
+        .find(|(c, r)| spans_width(c) + spans_width(r) < room)
+        .unwrap_or_default()
 }

@@ -18,6 +18,8 @@ use crate::ui::theme;
 const DATE_W: usize = 4;
 const AUTHOR_W: usize = 12;
 const HASH_W: usize = 7;
+/// The graph column is at least as wide as its heading.
+const GRAPH_LABEL: &str = "Graph";
 
 /// Short age of `ts` relative to `now` (both Unix seconds): "now", "5m", "3h", "10d", "2mo", "1y".
 pub fn relative_time(now: i64, ts: i64) -> String {
@@ -56,9 +58,10 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
         graph_w,
         desc_w,
     } = rows_layout(app, area);
+    column_header(app, frame, area, graph_w, desc_w);
 
     for (n, (i, cells)) in visible.zip(graphs).enumerate() {
-        let y = area.y + n as u16;
+        let y = area.y + 1 + n as u16;
         let row_area = Rect {
             y,
             height: 1,
@@ -129,7 +132,31 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
     }
 }
 
-/// Rows in view and the column widths they are drawn with.
+/// The dim first line naming the columns in view, each at its column's position.
+fn column_header(app: &App, frame: &mut Frame, area: Rect, graph_w: usize, desc_w: usize) {
+    let cols = columns_for(area.width);
+    let mut text = fit_to_width(GRAPH_LABEL, graph_w);
+    text.push(' ');
+    text.push_str(&fit_to_width("Description", desc_w));
+    text.push(' ');
+    text.push_str(&fit_to_width("Date", DATE_W));
+    if cols.author {
+        text.push(' ');
+        text.push_str(&fit_to_width("Author", AUTHOR_W));
+    }
+    if cols.hash {
+        text.push(' ');
+        text.push_str(&fit_to_width("Commit", HASH_W));
+    }
+    let style = Style::new()
+        .fg(theme::muted(app.depth))
+        .add_modifier(Modifier::DIM);
+    frame
+        .buffer_mut()
+        .set_line(area.x, area.y, &Line::styled(text, style), area.width);
+}
+
+/// Rows in view (below the column header) and the column widths they are drawn with.
 struct RowsLayout {
     visible: std::ops::Range<usize>,
     graphs: Vec<Vec<Cell>>,
@@ -139,7 +166,7 @@ struct RowsLayout {
 }
 
 fn rows_layout(app: &App, area: Rect) -> RowsLayout {
-    let visible = visible_rows(app, area.height as usize);
+    let visible = visible_rows(app, area.height.saturating_sub(1) as usize);
     let head = app.head_hash();
     let head_lane = app
         .commits
@@ -168,6 +195,7 @@ fn rows_layout(app: &App, area: Rect) -> RowsLayout {
         .map(Vec::len)
         .max()
         .unwrap_or(0)
+        .max(GRAPH_LABEL.len())
         .min(width / 3);
     let fixed = graph_w
         + 1
@@ -185,14 +213,15 @@ fn rows_layout(app: &App, area: Rect) -> RowsLayout {
     }
 }
 
-/// What is at `pos` in the table drawn in `area`: a ref label or else the row.
+/// What is at `pos` in the table drawn in `area`: a ref label or else the row. The
+/// column header line hits nothing.
 pub(crate) fn hit(app: &App, area: Rect, pos: (u16, u16)) -> Option<Hit> {
     let (x, y) = pos;
-    if x < area.x || x >= area.right() || y < area.y || y >= area.bottom() {
+    if x < area.x || x >= area.right() || y <= area.y || y >= area.bottom() {
         return None;
     }
     let layout = rows_layout(app, area);
-    let i = layout.visible.start + (y - area.y) as usize;
+    let i = layout.visible.start + (y - area.y - 1) as usize;
     if !layout.visible.contains(&i) {
         return None;
     }
