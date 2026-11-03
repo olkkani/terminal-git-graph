@@ -30,7 +30,12 @@ pub fn repo_status(path: &Path, with_tag: bool) -> RepoStatus {
     let mut has_upstream = false;
     let (mut ahead, mut behind) = (0usize, 0usize);
 
-    if let Ok(out) = git.run(&["--no-optional-locks", "status", "--porcelain=v2", "--branch"]) {
+    if let Ok(out) = git.run(&[
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v2",
+        "--branch",
+    ]) {
         for line in out.lines() {
             if let Some(head) = line.strip_prefix("# branch.head ") {
                 if head != "(detached)" {
@@ -40,8 +45,14 @@ pub fn repo_status(path: &Path, with_tag: bool) -> RepoStatus {
                 has_upstream = true;
             } else if let Some(ab) = line.strip_prefix("# branch.ab ") {
                 let mut it = ab.split_whitespace();
-                ahead = it.next().and_then(|s| s.trim_start_matches('+').parse().ok()).unwrap_or(0);
-                behind = it.next().and_then(|s| s.trim_start_matches('-').parse().ok()).unwrap_or(0);
+                ahead = it
+                    .next()
+                    .and_then(|s| s.trim_start_matches('+').parse().ok())
+                    .unwrap_or(0);
+                behind = it
+                    .next()
+                    .and_then(|s| s.trim_start_matches('-').parse().ok())
+                    .unwrap_or(0);
             } else if !line.starts_with('#') && !line.is_empty() {
                 dirty = true;
             }
@@ -55,7 +66,11 @@ pub fn repo_status(path: &Path, with_tag: bool) -> RepoStatus {
             (0, b) => SyncState::Behind(b),
             (a, b) => SyncState::Diverged(a, b),
         }
-    } else if git.run(&["remote"]).map(|o| o.trim().is_empty()).unwrap_or(true) {
+    } else if git
+        .run(&["remote"])
+        .map(|o| o.trim().is_empty())
+        .unwrap_or(true)
+    {
         SyncState::NoRemote
     } else {
         SyncState::NotPushed
@@ -70,5 +85,10 @@ pub fn repo_status(path: &Path, with_tag: bool) -> RepoStatus {
         None
     };
 
-    RepoStatus { branch, dirty, sync, latest_tag }
+    RepoStatus {
+        branch,
+        dirty,
+        sync,
+        latest_tag,
+    }
 }

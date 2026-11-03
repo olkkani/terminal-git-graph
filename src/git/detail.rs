@@ -132,7 +132,14 @@ pub fn load_worktree_changes(git: &Git) -> Result<Vec<FileChange>, GitError> {
     let status = git.run(&["status", "--porcelain=v1", "-z", "-uall"])?;
     // No HEAD yet (fresh repo): counts are simply unavailable.
     let counts = git
-        .run(&["diff", "--no-ext-diff", "--no-color", "HEAD", "--numstat", "-z"])
+        .run(&[
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "HEAD",
+            "--numstat",
+            "-z",
+        ])
         .unwrap_or_default();
     let mut count_map: HashMap<String, (Option<u32>, Option<u32>)> = HashMap::new();
     let mut toks = counts.split('\0').filter(|t| !t.is_empty());
@@ -182,7 +189,14 @@ pub fn load_worktree_changes(git: &Git) -> Result<Vec<FileChange>, GitError> {
 /// Untracked files are read from disk (capped at `MAX_UNTRACKED_BYTES`); tracked ones use `git diff HEAD`.
 pub fn load_worktree_diff(git: &Git, change: &FileChange) -> Result<String, GitError> {
     if change.status != '?' {
-        return git.run(&["diff", "--no-ext-diff", "--no-color", "HEAD", "--", &change.path]);
+        return git.run(&[
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            "HEAD",
+            "--",
+            &change.path,
+        ]);
     }
     let mut buf = Vec::new();
     File::open(git.dir().join(&change.path))

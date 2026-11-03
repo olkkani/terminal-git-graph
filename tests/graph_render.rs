@@ -20,7 +20,10 @@ fn row(lane: usize, width: usize) -> GraphRow {
 }
 
 fn opts() -> RenderOpts {
-    RenderOpts { is_head: false, ascii: false }
+    RenderOpts {
+        is_head: false,
+        ascii: false,
+    }
 }
 
 fn text(cells: &[Cell]) -> String {
@@ -68,7 +71,13 @@ fn join_from_the_left_draws_up_right_curve() {
 
 #[test]
 fn head_row_uses_ring_glyph() {
-    let cells = render_row(&row(0, 1), &RenderOpts { is_head: true, ascii: false });
+    let cells = render_row(
+        &row(0, 1),
+        &RenderOpts {
+            is_head: true,
+            ascii: false,
+        },
+    );
     assert_eq!(text(&cells), "◯ ");
 }
 
@@ -112,11 +121,21 @@ fn ascii_mode_emits_only_ascii() {
     r.forks = vec![seg(3, 2)];
     r.joins = vec![seg(2, 3)];
     r.is_merge = true;
-    let ascii = RenderOpts { is_head: true, ascii: true };
+    let ascii = RenderOpts {
+        is_head: true,
+        ascii: true,
+    };
     assert!(text(&render_row(&r, &ascii)).is_ascii());
     let mut l = row(1, 2);
     l.forks = vec![seg(0, 2)];
     l.joins = vec![seg(0, 2)];
-    assert!(text(&render_row(&l, &RenderOpts { is_head: false, ascii: true })).is_ascii());
+    assert!(text(&render_row(
+        &l,
+        &RenderOpts {
+            is_head: false,
+            ascii: true
+        }
+    ))
+    .is_ascii());
     assert!(text(&render_uncommitted(0, 3, true)).is_ascii());
 }

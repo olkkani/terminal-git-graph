@@ -81,7 +81,11 @@ impl TestRepo {
     /// Creates a bare repo, registers it as a remote, and pushes all refs.
     pub fn add_bare_remote(&self, name: &str) -> TempDir {
         let bare = tempfile::tempdir().expect("create bare tempdir");
-        run_git(bare.path(), &["init", "--bare", "-b", "main"], self.next_date());
+        run_git(
+            bare.path(),
+            &["init", "--bare", "-b", "main"],
+            self.next_date(),
+        );
         let url = bare.path().to_str().expect("utf-8 path");
         self.git(&["remote", "add", name, url]);
         self.git(&["push", name, "--all"]);

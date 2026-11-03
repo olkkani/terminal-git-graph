@@ -46,7 +46,10 @@ pub fn generate(commits: usize) -> TestRepo {
         }
         if made >= next_tag {
             let mark = main.expect("main has a commit");
-            let _ = write!(&mut gen.out, "reset refs/tags/v{next_tag}\nfrom :{mark}\n\n");
+            let _ = write!(
+                &mut gen.out,
+                "reset refs/tags/v{next_tag}\nfrom :{mark}\n\n"
+            );
             next_tag += TAG_EVERY;
         }
     }
@@ -89,8 +92,16 @@ impl Stream {
         let content = format!("{n}\n");
         let out = &mut self.out;
         let _ = writeln!(out, "commit {branch}\nmark :{n}");
-        let _ = writeln!(out, "author Test User <test@example.com> {} +0000", self.time);
-        let _ = writeln!(out, "committer Test User <test@example.com> {} +0000", self.time);
+        let _ = writeln!(
+            out,
+            "author Test User <test@example.com> {} +0000",
+            self.time
+        );
+        let _ = writeln!(
+            out,
+            "committer Test User <test@example.com> {} +0000",
+            self.time
+        );
         let _ = writeln!(out, "data {}\n{message}", message.len());
         if let Some(p) = from {
             let _ = writeln!(out, "from :{p}");

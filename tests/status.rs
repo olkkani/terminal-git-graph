@@ -6,7 +6,8 @@ use terminal_git_graph::git::Git;
 
 #[test]
 fn parses_branch_ahead_behind() {
-    let out = "# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -1\n";
+    let out =
+        "# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -1\n";
     let s = parse_status_v2(out);
     assert_eq!(s.branch.as_deref(), Some("main"));
     assert!(s.has_upstream);

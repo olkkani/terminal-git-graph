@@ -6,7 +6,12 @@ use terminal_git_graph::git::refs::{load_refs, Head, RefKind};
 use terminal_git_graph::git::Git;
 
 fn query(scope: Scope, remotes: bool, skip: usize, limit: usize) -> LogQuery {
-    LogQuery { scope, remotes, skip, limit }
+    LogQuery {
+        scope,
+        remotes,
+        skip,
+        limit,
+    }
 }
 
 #[test]
@@ -25,7 +30,11 @@ fn loads_commits_newest_first_with_parents() {
     assert_eq!(commits[0].subject, "c");
     assert_eq!(commits[0].author, "Test User");
     assert_eq!(commits[0].email, "test@example.com");
-    let ct: i64 = repo.git(&["log", "-1", "--format=%ct"]).trim().parse().unwrap();
+    let ct: i64 = repo
+        .git(&["log", "-1", "--format=%ct"])
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(commits[0].timestamp, ct);
 }
 
@@ -60,7 +69,10 @@ fn count_matches_rev_list() {
         .trim()
         .parse()
         .unwrap();
-    assert_eq!(count_commits(&git, Scope::AllBranches, false).unwrap(), expected);
+    assert_eq!(
+        count_commits(&git, Scope::AllBranches, false).unwrap(),
+        expected
+    );
 }
 
 #[test]
@@ -118,7 +130,11 @@ fn tags_are_loaded_as_labels() {
     repo.git(&["tag", "-a", "v2", "-m", "annotated"]);
     let git = Git::at(repo.path());
     let refs = load_refs(&git).unwrap();
-    let tags: Vec<_> = refs.labels.iter().filter(|l| l.kind == RefKind::Tag).collect();
+    let tags: Vec<_> = refs
+        .labels
+        .iter()
+        .filter(|l| l.kind == RefKind::Tag)
+        .collect();
     assert_eq!(tags.len(), 2);
     for t in &tags {
         assert_eq!(t.target, a, "tag {} should resolve to the commit", t.name);
@@ -171,7 +187,9 @@ fn empty_repo_has_no_commits_and_unborn_head() {
     let repo = TestRepo::new();
     let git = Git::at(repo.path());
     for scope in [Scope::AllBranches, Scope::Current] {
-        assert!(load_commits(&git, &query(scope, true, 0, 10)).unwrap().is_empty());
+        assert!(load_commits(&git, &query(scope, true, 0, 10))
+            .unwrap()
+            .is_empty());
         assert_eq!(count_commits(&git, scope, true).unwrap(), 0);
     }
     let refs = load_refs(&git).unwrap();
@@ -195,7 +213,10 @@ fn branch_head_is_reported() {
     let repo = TestRepo::new();
     repo.commit("a");
     let git = Git::at(repo.path());
-    assert_eq!(load_refs(&git).unwrap().head, Head::Branch("main".to_string()));
+    assert_eq!(
+        load_refs(&git).unwrap().head,
+        Head::Branch("main".to_string())
+    );
 }
 
 #[test]

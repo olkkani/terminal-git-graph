@@ -59,7 +59,11 @@ fn glyphs(ascii: bool) -> &'static Glyphs {
 }
 
 fn blank() -> Cell {
-    Cell { ch: ' ', color: None, dim: false }
+    Cell {
+        ch: ' ',
+        color: None,
+        dim: false,
+    }
 }
 
 /// Renders one row; the result has `2 * row.width` cells (lane `i` uses cells `2i` and `2i+1`).
@@ -67,7 +71,11 @@ pub fn render_row(row: &GraphRow, opts: &RenderOpts) -> Vec<Cell> {
     let g = glyphs(opts.ascii);
     let mut cells = vec![blank(); 2 * row.width];
     let put = |cells: &mut Vec<Cell>, i: usize, ch: char, color: usize| {
-        cells[i] = Cell { ch, color: Some(color), dim: false };
+        cells[i] = Cell {
+            ch,
+            color: Some(color),
+            dim: false,
+        };
     };
 
     for p in &row.pass {
@@ -75,7 +83,11 @@ pub fn render_row(row: &GraphRow, opts: &RenderOpts) -> Vec<Cell> {
     }
     // Horizontal runs between the node and each joining/forking lane; drawn over
     // vertical lines they cross, then the curve caps the far end.
-    let targets = row.joins.iter().map(|s| (s, false)).chain(row.forks.iter().map(|s| (s, true)));
+    let targets = row
+        .joins
+        .iter()
+        .map(|s| (s, false))
+        .chain(row.forks.iter().map(|s| (s, true)));
     for (seg, is_fork) in targets {
         let (lo, hi) = (row.lane.min(seg.lane), row.lane.max(seg.lane));
         for i in 2 * lo + 1..2 * hi {

@@ -49,7 +49,14 @@ fn does_not_descend_into_repos() {
 #[test]
 fn skips_hidden_and_build_folders() {
     let tmp = tempfile::tempdir().unwrap();
-    for skipped in [".hidden", "node_modules", "build", "dist", "vendor", "target"] {
+    for skipped in [
+        ".hidden",
+        "node_modules",
+        "build",
+        "dist",
+        "vendor",
+        "target",
+    ] {
         mkrepo(&tmp.path().join(skipped).join("r"));
     }
     mkrepo(&tmp.path().join("ok"));
@@ -62,12 +69,18 @@ fn refuses_home_and_its_ancestors() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("users/me");
     fs::create_dir_all(&home).unwrap();
-    assert!(matches!(scan(&home, 3, &home), Err(ScanError::RootIsHomeOrAncestor)));
+    assert!(matches!(
+        scan(&home, 3, &home),
+        Err(ScanError::RootIsHomeOrAncestor)
+    ));
     assert!(matches!(
         scan(&tmp.path().join("users"), 3, &home),
         Err(ScanError::RootIsHomeOrAncestor)
     ));
-    assert!(matches!(scan(tmp.path(), 3, &home), Err(ScanError::RootIsHomeOrAncestor)));
+    assert!(matches!(
+        scan(tmp.path(), 3, &home),
+        Err(ScanError::RootIsHomeOrAncestor)
+    ));
     // A subfolder of home is fine.
     fs::create_dir_all(home.join("code")).unwrap();
     assert!(scan(&home.join("code"), 3, &home).is_ok());
@@ -106,11 +119,19 @@ fn clone_of(repo: &TestRepo, remote: &tempfile::TempDir) -> tempfile::TempDir {
     let _ = repo;
     let clone = tempfile::tempdir().unwrap();
     let out = std::process::Command::new("git")
-        .args(["clone", remote.path().to_str().unwrap(), clone.path().to_str().unwrap()])
+        .args([
+            "clone",
+            remote.path().to_str().unwrap(),
+            clone.path().to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     assert!(out.status.success());
-    for (k, v) in [("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")] {
+    for (k, v) in [
+        ("user.name", "T"),
+        ("user.email", "t@example.com"),
+        ("commit.gpgsign", "false"),
+    ] {
         std::process::Command::new("git")
             .args(["config", k, v])
             .current_dir(clone.path())
@@ -121,8 +142,16 @@ fn clone_of(repo: &TestRepo, remote: &tempfile::TempDir) -> tempfile::TempDir {
 }
 
 fn git_in(dir: &Path, args: &[&str]) {
-    let out = std::process::Command::new("git").args(args).current_dir(dir).output().unwrap();
-    assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -146,7 +175,10 @@ fn status_ahead_behind_diverged() {
     git_in(other.path(), &["commit", "-m", "r2"]);
     git_in(other.path(), &["push", "origin", "main"]);
     repo.git(&["fetch", "origin"]);
-    assert_eq!(repo_status(repo.path(), false).sync, SyncState::Diverged(1, 2));
+    assert_eq!(
+        repo_status(repo.path(), false).sync,
+        SyncState::Diverged(1, 2)
+    );
 
     repo.git(&["reset", "--hard", "origin/main"]);
     repo.git(&["reset", "--hard", "HEAD~2"]);
@@ -191,7 +223,10 @@ fn latest_tag_only_when_requested() {
     repo.tag("v1.0");
     repo.commit("next");
     assert_eq!(repo_status(repo.path(), false).latest_tag, None);
-    assert_eq!(repo_status(repo.path(), true).latest_tag.as_deref(), Some("v1.0"));
+    assert_eq!(
+        repo_status(repo.path(), true).latest_tag.as_deref(),
+        Some("v1.0")
+    );
 }
 
 #[test]

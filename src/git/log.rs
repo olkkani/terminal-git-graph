@@ -116,16 +116,19 @@ fn parse_commit(record: &str) -> Option<Commit> {
     }
     let mut f = record.split('\x1f');
     let hash = f.next()?.to_string();
-    let parents = f
-        .next()?
-        .split_whitespace()
-        .map(str::to_string)
-        .collect();
+    let parents = f.next()?.split_whitespace().map(str::to_string).collect();
     let author = f.next()?.to_string();
     let email = f.next()?.to_string();
     let timestamp = f.next()?.parse().ok()?;
     let subject = f.next()?.to_string();
-    Some(Commit { hash, parents, author, email, timestamp, subject })
+    Some(Commit {
+        hash,
+        parents,
+        author,
+        email,
+        timestamp,
+        subject,
+    })
 }
 
 pub fn count_commits(git: &Git, scope: Scope, remotes: bool) -> Result<usize, GitError> {
