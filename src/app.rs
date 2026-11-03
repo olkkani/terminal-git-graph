@@ -204,6 +204,8 @@ pub(crate) enum Row {
 pub struct App {
     git: Git,
     pub(crate) depth: ColorDepth,
+    /// Draw the graph with ASCII instead of box-drawing characters.
+    pub(crate) ascii: bool,
     bare: bool,
     pub(crate) scope: Scope,
     pub(crate) remotes: bool,
@@ -249,6 +251,7 @@ impl App {
         let mut app = App {
             git,
             depth,
+            ascii: false,
             bare,
             scope: Scope::AllBranches,
             remotes: true,
@@ -640,6 +643,11 @@ impl App {
             }),
         }
         true
+    }
+
+    /// Draws the graph with ASCII characters, for terminals without box drawing.
+    pub fn set_ascii(&mut self, ascii: bool) {
+        self.ascii = ascii;
     }
 
     /// Replaces the clipboard writer (tests use one that cannot touch the real clipboard).

@@ -148,10 +148,10 @@ fn rows_layout(app: &App, area: Rect) -> RowsLayout {
                 &app.graph[c],
                 &RenderOpts {
                     is_head: Some(app.commits[c].hash.as_str()) == head,
-                    ascii: false,
+                    ascii: app.ascii,
                 },
             ),
-            _ => render_uncommitted(head_lane, head_lane + 1, false),
+            _ => render_uncommitted(head_lane, head_lane + 1, app.ascii),
         })
         .collect();
 

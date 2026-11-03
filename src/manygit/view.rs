@@ -160,6 +160,8 @@ pub struct Manygit {
     statuses: Vec<RepoStatus>,
     show_tags: bool,
     depth: ColorDepth,
+    /// Opened graphs draw with ASCII characters.
+    ascii: bool,
     /// Selected entry.
     selected: usize,
     /// First visible line; adjusted while drawing to keep the selection in view.
@@ -196,6 +198,7 @@ impl Manygit {
             statuses: Vec::new(),
             show_tags,
             depth,
+            ascii: false,
             selected: 0,
             offset: Cell::new(0),
             page_height: Cell::new(1),
@@ -331,6 +334,18 @@ impl Manygit {
     /// Replaces the clipboard writer (tests use one that cannot touch the real clipboard).
     pub fn set_copier(&mut self, copier: fn(&str) -> io::Result<CopyVia>) {
         self.copier = copier;
+    }
+
+    /// Opened graphs draw with ASCII characters instead of box drawing.
+    pub fn set_ascii(&mut self, ascii: bool) {
+        self.ascii = ascii;
+    }
+
+    /// Passes a filesystem change to the shown graph; the list ignores it.
+    pub fn on_watch(&mut self, ev: WatchEvent) {
+        if let Some(app) = self.graph_mut() {
+            app.on_watch(ev);
+        }
     }
 
     /// Replaces the browser opener (tests use one that opens nothing).
@@ -518,6 +533,7 @@ impl Manygit {
                         .collect();
                     app.embed(entry.name.clone(), repos);
                     app.set_copier(self.copier);
+                    app.set_ascii(self.ascii);
                     self.apps.insert(path.clone(), app);
                 }
                 Err(e) => {
@@ -644,6 +660,14 @@ impl Manygit {
             let _ = tx.send(results);
         });
         self.job = Some(rx);
+    }
+
+    /// Shows a modal dialog over whatever is on screen: the shown graph, or the list.
+    pub fn show_dialog(&mut self, dialog: Dialog) {
+        match self.graph_mut() {
+            Some(app) => app.open_dialog(dialog),
+            None => self.open_dialog(dialog),
+        }
     }
 
     fn open_dialog(&mut self, dialog: Dialog) {
