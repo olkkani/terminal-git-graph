@@ -166,6 +166,8 @@ pub(crate) enum DetailData {
     Loading,
     Commit(CommitDetail),
     Uncommitted(Vec<FileChange>),
+    /// Reading failed; the error was shown once and is not retried.
+    Failed,
 }
 
 pub(crate) struct DetailView {
@@ -180,7 +182,7 @@ pub(crate) struct DetailView {
 impl DetailView {
     pub(crate) fn files(&self) -> Option<&[FileChange]> {
         match &self.data {
-            DetailData::Loading => None,
+            DetailData::Loading | DetailData::Failed => None,
             DetailData::Commit(d) => Some(&d.files),
             DetailData::Uncommitted(files) => Some(files),
         }
@@ -547,6 +549,7 @@ impl App {
 
     /// Reads a detail that is still loading. The event loop calls this after drawing,
     /// so the detail header shows before the file list. Returns whether anything loaded.
+    /// A git failure marks the detail failed and shows git's message; it never ends the app.
     pub fn load_pending(&mut self) -> Result<bool, GitError> {
         let Some(view) = &mut self.detail else {
             return Ok(false);
@@ -554,14 +557,29 @@ impl App {
         if !matches!(view.data, DetailData::Loading) {
             return Ok(false);
         }
-        view.data = match &view.target {
-            DetailTarget::Commit(hash) => {
-                DetailData::Commit(self.cache.get_or_load(&self.git, hash)?.clone())
+        let loaded = match &view.target {
+            DetailTarget::Commit(hash) => self
+                .cache
+                .get_or_load(&self.git, hash)
+                .map(|d| DetailData::Commit(d.clone())),
+            DetailTarget::Uncommitted => {
+                load_worktree_changes(&self.git).map(DetailData::Uncommitted)
             }
-            DetailTarget::Uncommitted => DetailData::Uncommitted(load_worktree_changes(&self.git)?),
         };
-        let count = view.files().map_or(0, <[FileChange]>::len);
-        view.file = view.file.min(count.saturating_sub(1));
+        match loaded {
+            Ok(data) => {
+                view.data = data;
+                let count = view.files().map_or(0, <[FileChange]>::len);
+                view.file = view.file.min(count.saturating_sub(1));
+            }
+            Err(e) => {
+                view.data = DetailData::Failed;
+                self.open_dialog(Dialog::Error {
+                    title: "Cannot read details".to_string(),
+                    message: e.message(),
+                });
+            }
+        }
         Ok(true)
     }
 

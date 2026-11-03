@@ -21,6 +21,9 @@ pub(crate) fn draw(app: &App, view: &DetailView, frame: &mut Frame, area: Rect) 
     let mut lines = header_lines(app, view);
     let mut selected_line = None;
     match view.files() {
+        None if matches!(view.data, DetailData::Failed) => {
+            lines.push(Line::raw("Could not read the files."))
+        }
         None => lines.push(Line::raw("Loading…")),
         Some(files) => {
             lines.push(Line::styled(

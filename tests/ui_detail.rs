@@ -327,3 +327,33 @@ fn paging_keys_in_files_jump_to_first_and_last_file() {
     app.apply(Command::OpenDiff).unwrap();
     assert!(screen(&app, 60, 20).contains("+alpha"));
 }
+
+#[test]
+fn unreadable_commit_detail_shows_error_and_is_not_retried() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    let head = repo.commit("second");
+    let mut app = app_for(&repo);
+    // The commit object goes away after the log was read (e.g. gc after an amend).
+    let object = repo
+        .path()
+        .join(".git/objects")
+        .join(&head[..2])
+        .join(&head[2..]);
+    std::fs::remove_file(object).unwrap();
+
+    app.apply(Command::OpenDetail).unwrap();
+    assert!(app.load_pending().unwrap());
+    match &app.dialog().expect("error dialog").dialog {
+        terminal_git_graph::ui::dialog::Dialog::Error { title, .. } => {
+            assert_eq!(title, "Cannot read details")
+        }
+        other => panic!("unexpected dialog {other:?}"),
+    }
+    assert!(
+        !app.load_pending().unwrap(),
+        "failed detail must not reload"
+    );
+    assert!(!app.should_quit());
+    assert!(screen(&app, 80, 30).contains("Could not read the files."));
+}

@@ -226,8 +226,17 @@ fn event_loop(term: &mut Tui, screen: &mut impl Screen) -> Result<(), Box<dyn Er
         sync_watch(screen, &mut watching);
         term.draw(|f| screen.draw(f))?;
         // Draw the detail header first, then read the files and redraw.
-        if screen.load_pending()? {
-            continue;
+        match screen.load_pending() {
+            Ok(true) => continue,
+            Ok(false) => {}
+            // Not fatal: show git's message and keep running.
+            Err(e) => {
+                screen.show_dialog(Dialog::Error {
+                    title: "Git error".to_string(),
+                    message: e.message(),
+                });
+                continue;
+            }
         }
         // Wait for input, a filesystem change, a finished action or a due refresh;
         // all but input redraw.
