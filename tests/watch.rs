@@ -110,7 +110,7 @@ fn reload_keeps_selected_commit() {
     app.apply(Command::Down).unwrap();
     let before = app.selected_hash().map(str::to_string);
     repo.branch("other");
-    app.on_watch(WatchEvent::RefsChanged).unwrap();
+    app.on_watch(WatchEvent::RefsChanged);
     assert_eq!(app.selected_hash().map(str::to_string), before);
 }
 
@@ -120,7 +120,100 @@ fn reload_after_new_commit_shows_it_on_top() {
     repo.commit("first");
     let mut app = App::new(Git::at(repo.path()), ColorDepth::Indexed256).unwrap();
     let new = repo.commit("second");
-    app.on_watch(WatchEvent::RefsChanged).unwrap();
+    app.on_watch(WatchEvent::RefsChanged);
     app.apply(Command::Top).unwrap();
     assert_eq!(app.selected_hash(), Some(new.as_str()));
+}
+
+#[test]
+fn worktree_change_keeps_selected_commit() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.commit("second");
+    repo.commit("third");
+    let mut app = App::new(Git::at(repo.path()), ColorDepth::Indexed256).unwrap();
+    app.apply(Command::Down).unwrap();
+    let before = app.selected_hash().map(str::to_string);
+    assert!(before.is_some());
+
+    // The uncommitted row appears above the commits.
+    fs::write(repo.path().join("new.txt"), "new\n").unwrap();
+    app.on_watch(WatchEvent::WorktreeChanged);
+    assert_eq!(app.selected_hash().map(str::to_string), before);
+
+    // ...and goes away again.
+    fs::remove_file(repo.path().join("new.txt")).unwrap();
+    app.on_watch(WatchEvent::WorktreeChanged);
+    assert_eq!(app.selected_hash().map(str::to_string), before);
+}
+
+#[test]
+fn checkout_in_linked_worktree_emits_refs_changed() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.branch("side");
+    let dir = tempfile::tempdir().unwrap();
+    let wt = dir.path().join("wt");
+    let wt_str = wt.to_str().unwrap();
+    repo.git(&["worktree", "add", "-b", "linked", wt_str]);
+    let (tx, rx) = channel();
+    let _handle = watch(&Git::at(&wt), tx).expect("start watcher");
+    sleep(Duration::from_millis(500));
+    while rx.try_recv().is_ok() {}
+    repo.git(&["-C", wt_str, "checkout", "side"]);
+    assert!(wait_for(&rx, WatchEvent::RefsChanged));
+}
+
+#[test]
+fn packed_refs_change_emits_refs_changed() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.branch("side");
+    repo.git(&["pack-refs", "--all"]);
+    let packed = repo.path().join(".git").join("packed-refs");
+    let content = fs::read_to_string(&packed).unwrap();
+    let (tx, rx) = channel();
+    let _handle = watch(&Git::at(repo.path()), tx).expect("start watcher");
+    sleep(Duration::from_millis(500));
+    while rx.try_recv().is_ok() {}
+    fs::write(&packed, content).unwrap();
+    assert!(wait_for(&rx, WatchEvent::RefsChanged));
+}
+
+#[test]
+fn on_watch_in_bare_repo_skips_status() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    let remote = repo.add_bare_remote("origin");
+    let mut app = App::new(Git::at(remote.path()), ColorDepth::Indexed256).unwrap();
+    app.on_watch(WatchEvent::WorktreeChanged);
+    assert_eq!(app.refresh_error(), None);
+    app.on_watch(WatchEvent::RefsChanged);
+    assert_eq!(app.refresh_error(), None);
+    assert!(app.selected_hash().is_some());
+}
+
+#[test]
+fn failed_refresh_keeps_view_and_reports_error() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    let top = repo.commit("second");
+    let mut app = App::new(Git::at(repo.path()), ColorDepth::Indexed256).unwrap();
+    let dot_git = repo.path().join(".git");
+    let away = repo.path().join("git-away");
+
+    // Git cannot read the repo mid-operation: both refreshes fail, the app stays up.
+    fs::rename(&dot_git, &away).unwrap();
+    app.on_watch(WatchEvent::RefsChanged);
+    assert!(app.refresh_error().is_some());
+    assert_eq!(app.selected_hash(), Some(top.as_str()));
+    app.on_watch(WatchEvent::WorktreeChanged);
+    assert!(app.refresh_error().is_some());
+    assert_eq!(app.selected_hash(), Some(top.as_str()));
+
+    // The next successful refresh clears the error.
+    fs::rename(&away, &dot_git).unwrap();
+    app.on_watch(WatchEvent::RefsChanged);
+    assert_eq!(app.refresh_error(), None);
+    assert_eq!(app.selected_hash(), Some(top.as_str()));
 }

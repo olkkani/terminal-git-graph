@@ -129,6 +129,8 @@ pub struct App {
     cache: DetailCache,
     /// Diff body height at the last draw, bounding the diff scroll.
     pub(crate) diff_height: Cell<usize>,
+    /// Why the last filesystem-triggered refresh failed; cleared by the next success.
+    pub(crate) refresh_error: Option<String>,
     quit: bool,
 }
 
@@ -157,6 +159,7 @@ impl App {
             detail: None,
             cache: DetailCache::new(),
             diff_height: Cell::new(1),
+            refresh_error: None,
             quit: false,
         };
         app.reload()?;
@@ -280,24 +283,21 @@ impl App {
     }
 
     /// Applies a filesystem change: refs reload the first page keeping the selected
-    /// commit; working-tree edits refresh only the status.
-    pub fn on_watch(&mut self, ev: WatchEvent) -> Result<(), GitError> {
-        match ev {
-            WatchEvent::RefsChanged => self.reload()?,
-            WatchEvent::WorktreeChanged => {
-                if self.bare {
-                    return Ok(());
-                }
-                // Keep the same row selected when the uncommitted row appears or goes.
-                let before = usize::from(self.has_uncommitted());
-                self.status = load_status(&self.git)?;
-                let after = usize::from(self.has_uncommitted());
-                self.selected = (self.selected + after).saturating_sub(before);
-                self.invalidate_uncommitted_detail();
-            }
-        }
+    /// commit; working-tree edits refresh only the status. Changes arrive while git is
+    /// mid-operation, so a failure keeps the current view and is kept in
+    /// `refresh_error` instead of being returned.
+    pub fn on_watch(&mut self, ev: WatchEvent) {
+        let result = match ev {
+            WatchEvent::RefsChanged => self.reload(),
+            WatchEvent::WorktreeChanged => self.refresh_status(),
+        };
+        self.refresh_error = result.err().map(|e| e.message());
         self.follow_selection();
-        Ok(())
+    }
+
+    /// The message of the last failed filesystem-triggered refresh, if it has not succeeded since.
+    pub fn refresh_error(&self) -> Option<&str> {
+        self.refresh_error.as_deref()
     }
 
     /// Reads a detail that is still loading. The event loop calls this after drawing,
@@ -432,25 +432,53 @@ impl App {
         Ok(())
     }
 
+    /// Re-reads the working-tree status only, keeping the same row selected when the
+    /// uncommitted row appears or goes. Bare repos have no status.
+    fn refresh_status(&mut self) -> Result<(), GitError> {
+        if self.bare {
+            return Ok(());
+        }
+        let status = load_status(&self.git)?;
+        let before = usize::from(self.has_uncommitted());
+        self.status = status;
+        let after = usize::from(self.has_uncommitted());
+        self.selected = (self.selected + after).saturating_sub(before);
+        self.invalidate_uncommitted_detail();
+        Ok(())
+    }
+
     /// Reloads refs, status and the first page, keeping the selected commit if still loaded.
+    /// Everything is read before the view changes, so a failure leaves it as it was.
     fn reload(&mut self) -> Result<(), GitError> {
         let keep = self.selected_hash().map(str::to_string);
-        self.refs = load_refs(&self.git)?;
-        self.status = if self.bare {
+        let refs = load_refs(&self.git)?;
+        let status = if self.bare {
             WorkStatus::default()
         } else {
             load_status(&self.git)?
         };
-        self.total = count_commits(&self.git, self.scope, self.remotes)?;
+        let total = count_commits(&self.git, self.scope, self.remotes)?;
+        let page = load_commits(
+            &self.git,
+            &LogQuery {
+                scope: self.scope,
+                remotes: self.remotes,
+                skip: 0,
+                limit: PAGE_SIZE,
+            },
+        )?;
+        self.refs = refs;
+        self.status = status;
+        self.total = total;
         self.commits.clear();
         self.graph.clear();
         self.lanes = LaneBuilder::new();
-        self.exhausted = false;
-        self.load_page()?;
+        self.append_page(page);
         self.selected = keep
             .and_then(|h| self.commits.iter().position(|c| c.hash == h))
             .map_or(0, |i| i + usize::from(self.has_uncommitted()));
         self.invalidate_uncommitted_detail();
+        self.refresh_error = None;
         Ok(())
     }
 
@@ -477,11 +505,15 @@ impl App {
                 limit: PAGE_SIZE,
             },
         )?;
+        self.append_page(page);
+        Ok(())
+    }
+
+    fn append_page(&mut self, page: Vec<Commit>) {
         self.exhausted = page.len() < PAGE_SIZE || self.commits.len() + page.len() >= self.total;
         for c in page {
             self.graph.push(self.lanes.push(&c));
             self.commits.push(c);
         }
-        Ok(())
     }
 }

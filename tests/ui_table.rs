@@ -340,3 +340,33 @@ fn relative_time_table() {
         assert_eq!(relative_time(now, now - ago), want, "{ago}s ago");
     }
 }
+
+#[test]
+fn header_shows_refresh_error_truncated() {
+    use terminal_git_graph::watch::WatchEvent;
+    let repo = TestRepo::new();
+    repo.commit("first");
+    let mut app = app_for(&repo);
+    let dot_git = repo.path().join(".git");
+    let away = repo.path().join("git-away");
+    std::fs::rename(&dot_git, &away).unwrap();
+    app.on_watch(WatchEvent::RefsChanged);
+    std::fs::rename(&away, &dot_git).unwrap();
+    let err = app.refresh_error().expect("refresh failed").to_string();
+
+    let rows = render(&app, 80, 6);
+    let header = &rows[0];
+    let rest = header
+        .strip_prefix("main  1 commit  ! ")
+        .unwrap_or_else(|| panic!("{header:?}"));
+    // The first line of git's message, cut to 40 cells (including "  ! ") with an ellipsis.
+    let shown = &rest[..rest.find('…').expect("truncated")];
+    assert!(err.starts_with(shown), "{shown:?} vs {err:?}");
+    assert_eq!(format!("  ! {shown}…").width(), 40);
+    // The toolbar still fits after it.
+    assert!(header.trim_end().ends_with("Remotes"), "{header:?}");
+
+    // A successful refresh clears it.
+    app.on_watch(WatchEvent::RefsChanged);
+    assert!(!render(&app, 80, 6)[0].contains('!'));
+}

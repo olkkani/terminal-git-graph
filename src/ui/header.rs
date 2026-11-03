@@ -1,7 +1,8 @@
-//! Header line: current branch, loaded commit count and the scope/remotes toolbar.
+//! Header line: current branch, loaded commit count, the last refresh error and the
+//! scope/remotes toolbar.
 
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
@@ -9,6 +10,9 @@ use crate::app::App;
 use crate::git::log::Scope;
 use crate::git::refs::Head;
 use crate::ui::layout::{display_width, truncate_to_width};
+
+/// Widest the refresh error may get in the header, in cells.
+const REFRESH_ERROR_MAX: usize = 40;
 
 pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
     let branch = match &app.refs.head {
@@ -28,6 +32,16 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
         Style::new().add_modifier(Modifier::BOLD),
     )];
 
+    let mut used = display_width(&left);
+    if let Some(err) = &app.refresh_error {
+        // First line only, kept short so the header stays one line.
+        let first = err.lines().next().unwrap_or_default();
+        let room = width.saturating_sub(used).min(REFRESH_ERROR_MAX);
+        let text = truncate_to_width(&format!("  ! {first}"), room);
+        used += display_width(&text);
+        spans.push(Span::styled(text, Style::new().fg(Color::Red)));
+    }
+
     let toggle = |label: &'static str, on: bool| {
         let style = if on {
             Style::new().add_modifier(Modifier::REVERSED)
@@ -43,7 +57,6 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
         toggle("Remotes", app.remotes),
     ];
     let toolbar_w: usize = toolbar.iter().map(|s| display_width(&s.content)).sum();
-    let used = display_width(&left);
     if used + 1 + toolbar_w <= width {
         spans.push(Span::raw(" ".repeat(width - used - toolbar_w)));
         spans.extend(toolbar);

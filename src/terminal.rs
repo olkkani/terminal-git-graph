@@ -66,7 +66,7 @@ fn event_loop(
         let mut changed = false;
         while !changed && !event::poll(INPUT_POLL)? {
             for ev in watch.try_iter() {
-                app.on_watch(ev)?;
+                app.on_watch(ev);
                 changed = true;
             }
         }
