@@ -15,7 +15,7 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use crate::app::{App, Command};
+use crate::app::{App, Command, Focus};
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -47,11 +47,15 @@ pub fn run(app: &mut App) -> Result<(), Box<dyn Error>> {
 fn event_loop(term: &mut Tui, app: &mut App) -> Result<(), Box<dyn Error>> {
     while !app.should_quit() {
         term.draw(|f| app.draw(f))?;
+        // Draw the detail header first, then read the files and redraw.
+        if app.load_pending()? {
+            continue;
+        }
         let cmd = match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => key_command(key),
+            Event::Key(key) if key.kind == KeyEventKind::Press => key_command(key, app),
             Event::Mouse(m) => match m.kind {
-                MouseEventKind::ScrollUp => Some(Command::Up),
-                MouseEventKind::ScrollDown => Some(Command::Down),
+                MouseEventKind::ScrollUp => Some(up(app)),
+                MouseEventKind::ScrollDown => Some(down(app)),
                 _ => None,
             },
             _ => None,
@@ -63,14 +67,43 @@ fn event_loop(term: &mut Tui, app: &mut App) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn key_command(key: KeyEvent) -> Option<Command> {
+fn up(app: &App) -> Command {
+    match app.focus() {
+        Focus::Table => Command::Up,
+        Focus::Files => Command::FileUp,
+        Focus::Diff => Command::DiffScrollUp,
+    }
+}
+
+fn down(app: &App) -> Command {
+    match app.focus() {
+        Focus::Table => Command::Down,
+        Focus::Files => Command::FileDown,
+        Focus::Diff => Command::DiffScrollDown,
+    }
+}
+
+/// Maps a key press to a command; arrows, Enter and Esc depend on the focused view.
+pub fn key_command(key: KeyEvent, app: &App) -> Option<Command> {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Some(Command::Quit);
     }
     Some(match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => Command::Quit,
-        KeyCode::Up | KeyCode::Char('k') => Command::Up,
-        KeyCode::Down | KeyCode::Char('j') => Command::Down,
+        KeyCode::Char('q') => Command::Quit,
+        KeyCode::Esc => match app.focus() {
+            Focus::Diff => Command::CloseDiff,
+            _ if app.detail_open() => Command::CloseDetail,
+            _ => Command::Quit,
+        },
+        KeyCode::Enter => match app.focus() {
+            Focus::Table if app.detail_open() => Command::FocusFiles,
+            Focus::Table => Command::OpenDetail,
+            Focus::Files => Command::OpenDiff,
+            Focus::Diff => return None,
+        },
+        KeyCode::Tab if app.detail_open() => Command::FocusFiles,
+        KeyCode::Up | KeyCode::Char('k') => up(app),
+        KeyCode::Down | KeyCode::Char('j') => down(app),
         KeyCode::PageUp => Command::PageUp,
         KeyCode::PageDown => Command::PageDown,
         KeyCode::Home | KeyCode::Char('g') => Command::Top,

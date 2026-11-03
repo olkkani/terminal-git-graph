@@ -1,7 +1,12 @@
-//! Graph view state: loaded commits and lanes, refs, working-tree status and selection.
+//! Graph view state: loaded commits and lanes, refs, working-tree status, selection,
+//! and the commit detail / file diff opened from it.
 
 use std::cell::Cell;
 
+use crate::git::detail::{
+    load_file_diff, load_worktree_changes, load_worktree_diff, CommitDetail, DetailCache,
+    FileChange,
+};
 use crate::git::log::{count_commits, load_commits, Commit, LogQuery, Scope, PAGE_SIZE};
 use crate::git::refs::{load_refs, Head, RefKind, Refs};
 use crate::git::status::{load_status, WorkStatus};
@@ -24,6 +29,66 @@ pub enum Command {
     ToggleScope,
     ToggleRemotes,
     Refresh,
+    /// Opens the detail of the selected row; it then follows the selection.
+    OpenDetail,
+    CloseDetail,
+    /// Moves keyboard focus between the table and the detail's file list.
+    FocusFiles,
+    FileUp,
+    FileDown,
+    /// Opens the diff of the selected file.
+    OpenDiff,
+    CloseDiff,
+    DiffScrollUp,
+    DiffScrollDown,
+}
+
+/// Where keyboard input goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    Table,
+    Files,
+    Diff,
+}
+
+/// What a detail view shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DetailTarget {
+    Commit(String),
+    Uncommitted,
+}
+
+pub(crate) enum DetailData {
+    /// Not read yet: only the header (subject/hash) can be drawn.
+    Loading,
+    Commit(CommitDetail),
+    Uncommitted(Vec<FileChange>),
+}
+
+pub(crate) struct DetailView {
+    pub(crate) target: DetailTarget,
+    pub(crate) data: DetailData,
+    /// Selected file index.
+    pub(crate) file: usize,
+    pub(crate) files_focused: bool,
+    pub(crate) diff: Option<DiffView>,
+}
+
+impl DetailView {
+    pub(crate) fn files(&self) -> Option<&[FileChange]> {
+        match &self.data {
+            DetailData::Loading => None,
+            DetailData::Commit(d) => Some(&d.files),
+            DetailData::Uncommitted(files) => Some(files),
+        }
+    }
+}
+
+pub(crate) struct DiffView {
+    pub(crate) path: String,
+    pub(crate) lines: Vec<String>,
+    /// First visible line.
+    pub(crate) scroll: usize,
 }
 
 /// A displayed table row.
@@ -52,6 +117,10 @@ pub struct App {
     pub(crate) offset: Cell<usize>,
     /// Table height at the last draw, used as the PageUp/PageDown step.
     pub(crate) page_height: Cell<usize>,
+    pub(crate) detail: Option<DetailView>,
+    cache: DetailCache,
+    /// Diff body height at the last draw, bounding the diff scroll.
+    pub(crate) diff_height: Cell<usize>,
     quit: bool,
 }
 
@@ -77,6 +146,9 @@ impl App {
             selected: 0,
             offset: Cell::new(0),
             page_height: Cell::new(1),
+            detail: None,
+            cache: DetailCache::new(),
+            diff_height: Cell::new(1),
             quit: false,
         };
         app.reload()?;
@@ -113,8 +185,87 @@ impl App {
                 self.reload()?;
             }
             Command::Refresh => self.reload()?,
+            Command::OpenDetail => {
+                if self.detail.is_none() {
+                    self.detail = self.current_target().map(|target| DetailView {
+                        target,
+                        data: DetailData::Loading,
+                        file: 0,
+                        files_focused: false,
+                        diff: None,
+                    });
+                }
+            }
+            Command::CloseDetail => self.detail = None,
+            Command::FocusFiles => {
+                if let Some(view) = &mut self.detail {
+                    view.files_focused = !view.files_focused;
+                }
+            }
+            Command::FileUp => {
+                if let Some(view) = &mut self.detail {
+                    view.file = view.file.saturating_sub(1);
+                }
+            }
+            Command::FileDown => {
+                if let Some(view) = &mut self.detail {
+                    let count = view.files().map_or(0, <[FileChange]>::len);
+                    view.file = (view.file + 1).min(count.saturating_sub(1));
+                }
+            }
+            Command::OpenDiff => self.open_diff()?,
+            Command::CloseDiff => {
+                if let Some(view) = &mut self.detail {
+                    view.diff = None;
+                }
+            }
+            Command::DiffScrollUp => {
+                if let Some(diff) = self.detail.as_mut().and_then(|v| v.diff.as_mut()) {
+                    diff.scroll = diff.scroll.saturating_sub(1);
+                }
+            }
+            Command::DiffScrollDown => {
+                let height = self.diff_height.get();
+                if let Some(diff) = self.detail.as_mut().and_then(|v| v.diff.as_mut()) {
+                    let max = diff.lines.len().saturating_sub(height);
+                    diff.scroll = (diff.scroll + 1).min(max);
+                }
+            }
         }
+        self.follow_selection();
         Ok(())
+    }
+
+    /// Reads a detail that is still loading. The event loop calls this after drawing,
+    /// so the detail header shows before the file list. Returns whether anything loaded.
+    pub fn load_pending(&mut self) -> Result<bool, GitError> {
+        let Some(view) = &mut self.detail else {
+            return Ok(false);
+        };
+        if !matches!(view.data, DetailData::Loading) {
+            return Ok(false);
+        }
+        view.data = match &view.target {
+            DetailTarget::Commit(hash) => {
+                DetailData::Commit(self.cache.get_or_load(&self.git, hash)?.clone())
+            }
+            DetailTarget::Uncommitted => DetailData::Uncommitted(load_worktree_changes(&self.git)?),
+        };
+        let count = view.files().map_or(0, <[FileChange]>::len);
+        view.file = view.file.min(count.saturating_sub(1));
+        Ok(true)
+    }
+
+    pub fn focus(&self) -> Focus {
+        match &self.detail {
+            Some(view) if view.diff.is_some() => Focus::Diff,
+            Some(view) if view.files_focused => Focus::Files,
+            _ => Focus::Table,
+        }
+    }
+
+    pub fn detail_open(&self) -> bool {
+        self.detail.is_some()
     }
 
     pub fn draw(&self, frame: &mut ratatui::Frame) {
@@ -130,6 +281,50 @@ impl App {
 
     pub fn should_quit(&self) -> bool {
         self.quit
+    }
+
+    fn current_target(&self) -> Option<DetailTarget> {
+        Some(match self.row(self.selected)? {
+            Row::Commit(i) => DetailTarget::Commit(self.commits[i].hash.clone()),
+            Row::Uncommitted => DetailTarget::Uncommitted,
+        })
+    }
+
+    /// Points an open detail at the selected row, closing it when nothing is selected.
+    fn follow_selection(&mut self) {
+        let target = self.current_target();
+        let Some(view) = &mut self.detail else {
+            return;
+        };
+        match target {
+            None => self.detail = None,
+            Some(t) if t != view.target => {
+                view.target = t;
+                view.data = DetailData::Loading;
+                view.file = 0;
+                view.diff = None;
+            }
+            Some(_) => {}
+        }
+    }
+
+    fn open_diff(&mut self) -> Result<(), GitError> {
+        let Some(view) = &mut self.detail else {
+            return Ok(());
+        };
+        let Some(change) = view.files().and_then(|f| f.get(view.file)) else {
+            return Ok(());
+        };
+        let text = match &view.target {
+            DetailTarget::Commit(hash) => load_file_diff(&self.git, hash, &change.path)?,
+            DetailTarget::Uncommitted => load_worktree_diff(&self.git, change)?,
+        };
+        view.diff = Some(DiffView {
+            path: change.path.clone(),
+            lines: text.lines().map(str::to_string).collect(),
+            scroll: 0,
+        });
+        Ok(())
     }
 
     pub(crate) fn has_uncommitted(&self) -> bool {
@@ -191,6 +386,13 @@ impl App {
         self.selected = keep
             .and_then(|h| self.commits.iter().position(|c| c.hash == h))
             .map_or(0, |i| i + usize::from(self.has_uncommitted()));
+        if let Some(view) = &mut self.detail {
+            // Re-read on the next load: the working tree may have changed.
+            if view.target == DetailTarget::Uncommitted {
+                view.data = DetailData::Loading;
+                view.diff = None;
+            }
+        }
         Ok(())
     }
 

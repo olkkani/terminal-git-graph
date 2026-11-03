@@ -9,6 +9,8 @@ pub const HASH_MIN_WIDTH: u16 = 100;
 /// Below this size the UI shows only a "too small" message.
 pub const MIN_WIDTH: u16 = 20;
 pub const MIN_HEIGHT: u16 = 3;
+/// From this height the detail sits below the table; shorter terminals show it full screen.
+pub const DETAIL_SPLIT_MIN_HEIGHT: u16 = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Columns {
@@ -58,5 +60,18 @@ pub fn fit_to_width(s: &str, width: usize) -> String {
     let mut out = truncate_to_width(s, width);
     let pad = width - display_width(&out);
     out.extend(std::iter::repeat_n(' ', pad));
+    out
+}
+
+/// Text safe to draw: tabs become four spaces and other control characters are dropped.
+pub fn printable(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '\t' {
+            out.push_str("    ");
+        } else if !c.is_control() {
+            out.push(c);
+        }
+    }
     out
 }
