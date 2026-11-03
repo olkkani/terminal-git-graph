@@ -429,3 +429,18 @@ fn reload_keeps_selection_and_scroll_below_first_page() {
     assert_eq!(app.selected_hash().map(str::to_string), before);
     assert_eq!(screen(&app, 60, 10), shown);
 }
+
+#[test]
+fn detached_head_row_shows_head_badge() {
+    let repo = TestRepo::new();
+    let first = repo.commit("first");
+    repo.commit("second");
+    repo.git(&["checkout", "--detach", &first]);
+    let app = app_for(&repo);
+    let rows = render(&app, 60, 6);
+    let row = rows
+        .iter()
+        .find(|l| l.contains("first"))
+        .expect("row of first");
+    assert!(row.contains("HEAD first"), "{rows:?}");
+}

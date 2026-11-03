@@ -691,3 +691,59 @@ fn tall_menu_scrolls_on_a_ten_row_terminal() {
     let screen = render(&app, w, h).join("\n");
     assert!(screen.contains("Add tag"), "{screen}");
 }
+
+#[test]
+fn remote_checkout_with_existing_local_checks_it_out_directly() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.branch("feature");
+    let _bare = repo.add_bare_remote("origin");
+    // Local feature moves on, so origin/feature becomes its own label.
+    repo.checkout("feature");
+    repo.commit("local only");
+    repo.checkout("main");
+    let mut app = app_for(&repo);
+
+    let hit = label_hit(&mut app, &repo, "origin/feature");
+    open_menu(&mut app, hit);
+    pick(&mut app, "Checkout");
+    assert!(app.dialog().is_none(), "{:?}", app.dialog());
+    wait_job(&mut app);
+    assert!(app.dialog().is_none(), "{:?}", app.dialog());
+    assert_eq!(current_branch(&repo), "feature");
+
+    repo.checkout("main");
+    app.on_watch(terminal_git_graph::watch::WatchEvent::RefsChanged);
+    let Hit::Label { row, index } = label_hit(&mut app, &repo, "origin/feature") else {
+        unreachable!()
+    };
+    app.apply(Command::ActivateLabel { row, index }).unwrap();
+    assert!(app.dialog().is_none(), "{:?}", app.dialog());
+    wait_job(&mut app);
+    assert_eq!(current_branch(&repo), "feature");
+}
+
+#[test]
+fn detached_head_badge_opens_commit_menu() {
+    let repo = TestRepo::new();
+    let first = repo.commit("first");
+    repo.commit("second");
+    repo.git(&["checkout", "--detach", &first]);
+    let mut app = app_for(&repo);
+    let hit = label_hit(&mut app, &repo, "HEAD");
+    let Hit::Label { index, .. } = hit else {
+        unreachable!()
+    };
+    assert_eq!(index, 0, "HEAD badge leads the row");
+    open_menu(&mut app, hit);
+    let labels: Vec<&str> = app
+        .menu()
+        .unwrap()
+        .items
+        .iter()
+        .map(|i| i.label.as_str())
+        .collect();
+    let commit_menu = menu_for(&Target::Commit(first.clone()), &ctx(Head::Detached(first)));
+    let want: Vec<&str> = commit_menu.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, want);
+}

@@ -752,6 +752,21 @@ impl App {
 
     /// Asks for a missing value, then confirmation when the action needs it, then runs it.
     fn begin(&mut self, a: Action) {
+        // A remote branch whose local branch already exists: check that one out.
+        let a = match a {
+            Action::CheckoutRemote {
+                branch, local_name, ..
+            } if local_name.is_empty()
+                && self
+                    .refs
+                    .labels
+                    .iter()
+                    .any(|l| l.kind == RefKind::LocalBranch && l.name == branch) =>
+            {
+                Action::CheckoutBranch(branch)
+            }
+            a => a,
+        };
         if let Some(dialog) = input_dialog(&a) {
             self.open_dialog(dialog);
             self.pending = Some(Pending::Input(a));
@@ -814,6 +829,7 @@ impl App {
                 };
                 let label = *self.refs.labels_for(&self.commits[i].hash).get(index)?;
                 Some(match label.kind {
+                    RefKind::Head => Target::Commit(label.target.clone()),
                     RefKind::LocalBranch => Target::LocalBranch(label.name.clone()),
                     RefKind::RemoteBranch => {
                         let (remote, name) = label.name.split_once('/')?;

@@ -253,7 +253,7 @@ fn label_text(app: &App, label: &RefLabel) -> String {
             }
             text
         }
-        RefKind::RemoteBranch | RefKind::Tag => label.name.clone(),
+        RefKind::Head | RefKind::RemoteBranch | RefKind::Tag => label.name.clone(),
     }
 }
 
@@ -278,7 +278,7 @@ fn badge_spans(
             continue;
         }
         let style = match label.kind {
-            RefKind::LocalBranch => Style::new()
+            RefKind::Head | RefKind::LocalBranch => Style::new()
                 .fg(Color::Black)
                 .bg(lane)
                 .add_modifier(Modifier::BOLD),

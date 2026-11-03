@@ -2,6 +2,8 @@ use super::{Git, GitError};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RefKind {
+    /// The `HEAD` badge of a detached HEAD.
+    Head,
     LocalBranch,
     RemoteBranch,
     Tag,
@@ -97,7 +99,16 @@ pub fn load_refs(git: &Git) -> Result<Refs, GitError> {
     }
 
     let head = load_head(git)?;
-    let mut labels = locals;
+    let mut labels = Vec::new();
+    if let Head::Detached(hash) = &head {
+        labels.push(RefLabel {
+            name: "HEAD".to_string(),
+            kind: RefKind::Head,
+            target: hash.clone(),
+            remotes: Vec::new(),
+        });
+    }
+    labels.extend(locals);
     labels.extend(remote_labels);
     labels.extend(tags);
     Ok(Refs { labels, head })
