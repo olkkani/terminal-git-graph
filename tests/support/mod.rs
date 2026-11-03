@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod big_repo;
+
 use std::cell::Cell;
 use std::fs;
 use std::path::Path;
