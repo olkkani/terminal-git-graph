@@ -1,5 +1,6 @@
 pub mod log;
 pub mod refs;
+pub mod status;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
