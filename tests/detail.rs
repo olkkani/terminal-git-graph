@@ -143,6 +143,7 @@ fn user_git_config_does_not_affect_diff_output() {
     repo.commit_file("a.txt", "one\n", "first");
     let h = repo.commit_file("a.txt", "one\ntwo\n", "second");
     repo.git(&["config", "color.ui", "always"]);
+    repo.git(&["config", "color.diff", "always"]);
     repo.git(&["config", "diff.external", "false"]);
     let git = Git::at(repo.path());
     let d = load_file_diff(&git, &h, "a.txt").unwrap();
