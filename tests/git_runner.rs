@@ -67,3 +67,26 @@ fn call_count_increments() {
     git.run(&["status"]).unwrap();
     assert_eq!(git.call_count(), 2);
 }
+
+#[test]
+fn run_with_env_passes_env_through() {
+    let repo = TestRepo::new();
+    let git = Git::at(repo.path());
+    let out = git
+        .run_with_env(
+            &["var", "GIT_AUTHOR_IDENT"],
+            &[("GIT_AUTHOR_NAME", "x"), ("GIT_AUTHOR_EMAIL", "x@x")],
+        )
+        .unwrap();
+    assert!(out.contains("x <x@x>"), "{out}");
+}
+
+#[test]
+fn run_forces_c_locale_and_no_prompt() {
+    let repo = TestRepo::new();
+    let git = Git::at(repo.path());
+    // A shell alias lets us observe the environment git gives its children.
+    let env = git.run(&["-c", "alias.e=!env", "e"]).unwrap();
+    assert!(env.lines().any(|l| l == "LC_ALL=C"), "{env}");
+    assert!(env.lines().any(|l| l == "GIT_TERMINAL_PROMPT=0"), "{env}");
+}

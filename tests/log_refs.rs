@@ -197,3 +197,26 @@ fn branch_head_is_reported() {
     let git = Git::at(repo.path());
     assert_eq!(load_refs(&git).unwrap().head, Head::Branch("main".to_string()));
 }
+
+#[test]
+fn file_named_head_does_not_hide_real_log() {
+    let repo = TestRepo::new();
+    repo.commit_file("HEAD", "x\n", "add file named HEAD");
+    repo.commit("second");
+    let git = Git::at(repo.path());
+    let commits = load_commits(&git, &query(Scope::Current, true, 0, PAGE_SIZE)).unwrap();
+    assert_eq!(commits.len(), 2);
+    assert_eq!(count_commits(&git, Scope::Current, true).unwrap(), 2);
+}
+
+#[test]
+fn unborn_head_is_empty_even_under_non_english_locale() {
+    // Git::run forces LC_ALL=C, so a caller's locale must not break unborn detection.
+    // env mutation is process-wide, but Git::run overrides LC_ALL for its children anyway.
+    std::env::set_var("LC_ALL", "ko_KR.UTF-8");
+    let repo = TestRepo::new();
+    let git = Git::at(repo.path());
+    let commits = load_commits(&git, &query(Scope::Current, true, 0, PAGE_SIZE)).unwrap();
+    assert!(commits.is_empty());
+    assert_eq!(count_commits(&git, Scope::Current, true).unwrap(), 0);
+}

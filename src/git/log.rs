@@ -59,6 +59,7 @@ fn is_unborn_error(e: &GitError) -> bool {
         GitError::Failed { stderr, .. } => {
             stderr.contains("does not have any commits yet")
                 || stderr.contains("ambiguous argument 'HEAD'")
+                || stderr.contains("bad revision 'HEAD'")
         }
         _ => false,
     }
@@ -78,6 +79,7 @@ pub fn load_commits(git: &Git, q: &LogQuery) -> Result<Vec<Commit>, GitError> {
         &limit,
     ];
     args.extend(scope_args(q.scope, q.remotes));
+    args.push("--");
     match git.run(&args) {
         Ok(out) => Ok(out.split('\0').filter_map(parse_commit).collect()),
         Err(e) if is_unborn_error(&e) => Ok(Vec::new()),
@@ -107,6 +109,7 @@ fn parse_commit(record: &str) -> Option<Commit> {
 pub fn count_commits(git: &Git, scope: Scope, remotes: bool) -> Result<usize, GitError> {
     let mut args = vec!["rev-list", "--count"];
     args.extend(scope_args(scope, remotes));
+    args.push("--");
     match git.run(&args) {
         Ok(out) => Ok(out.trim().parse().unwrap_or(0)),
         Err(e) if is_unborn_error(&e) => Ok(0),

@@ -2,7 +2,7 @@ pub mod log;
 pub mod refs;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -63,7 +63,11 @@ impl Git {
     pub fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Result<String, GitError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         let mut cmd = Command::new("git");
-        cmd.args(args).current_dir(&self.dir);
+        cmd.args(args)
+            .current_dir(&self.dir)
+            .stdin(Stdio::null())
+            .env("LC_ALL", "C")
+            .env("GIT_TERMINAL_PROMPT", "0");
         for (k, v) in env {
             cmd.env(k, v);
         }
