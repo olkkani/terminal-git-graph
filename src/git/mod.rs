@@ -1,3 +1,6 @@
+pub mod log;
+pub mod refs;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
