@@ -444,3 +444,64 @@ fn detached_head_row_shows_head_badge() {
         .expect("row of first");
     assert!(row.contains("HEAD first"), "{rows:?}");
 }
+
+const HEART: &str = "❤️";
+const THUMB: &str = "👍🏽";
+const FAMILY: &str = "👨‍👩‍👧";
+
+#[test]
+fn emoji_graphemes_measure_like_ratatui() {
+    use terminal_git_graph::ui::layout::display_width;
+    for s in [HEART, THUMB, FAMILY, "a❤️b👍🏽c👨‍👩‍👧d", "한글🚀"] {
+        assert_eq!(
+            display_width(s),
+            ratatui::text::Line::raw(s).width(),
+            "{s:?}"
+        );
+    }
+    assert_eq!(display_width(FAMILY), 2);
+}
+
+#[test]
+fn truncation_never_cuts_a_grapheme() {
+    use terminal_git_graph::ui::layout::display_width;
+    use unicode_segmentation::UnicodeSegmentation;
+    let s = format!("a{HEART}b{THUMB}c{FAMILY}d");
+    let whole: Vec<&str> = s.graphemes(true).collect();
+    for width in 0..12 {
+        let cut = truncate_to_width(&s, width);
+        assert!(display_width(&cut) <= width, "{width}: {cut:?}");
+        let kept: Vec<&str> = cut.trim_end_matches('…').graphemes(true).collect();
+        assert_eq!(kept, whole[..kept.len()], "{width}: {cut:?}");
+    }
+    assert_eq!(truncate_to_width(&s, 5), format!("a{HEART}b…"));
+}
+
+#[test]
+fn emoji_subjects_keep_columns_aligned() {
+    let repo = TestRepo::new();
+    repo.commit("plain subject");
+    repo.commit(&format!("love {HEART} it"));
+    repo.commit(&format!("ok {THUMB} done"));
+    repo.commit(&format!("fam {FAMILY} {FAMILY} {HEART}{THUMB}{FAMILY} end"));
+    repo.commit(&FAMILY.repeat(60));
+    let app = app_for(&repo);
+    let buf = {
+        let mut term = Terminal::new(TestBackend::new(120, 10)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        term.backend().buffer().clone()
+    };
+    // x of the author column ("Test User") on every commit row.
+    let author_x: Vec<u16> = (0..buf.area.height)
+        .filter_map(|y| {
+            (0..buf.area.width.saturating_sub(4))
+                .find(|&x| (0..4).map(|i| buf[(x + i, y)].symbol()).collect::<String>() == "Test")
+        })
+        .collect();
+    assert_eq!(author_x.len(), 5, "{:?}", lines(&buf));
+    assert!(
+        author_x.iter().all(|&x| x == author_x[0]),
+        "{author_x:?}\n{:#?}",
+        lines(&buf)
+    );
+}

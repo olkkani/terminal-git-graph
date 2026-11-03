@@ -357,3 +357,17 @@ fn unreadable_commit_detail_shows_error_and_is_not_retried() {
     assert!(!app.should_quit());
     assert!(screen(&app, 80, 30).contains("Could not read the files."));
 }
+
+#[test]
+fn dialog_wrap_keeps_emoji_graphemes_whole() {
+    let family = "👨‍👩‍👧";
+    let repo = TestRepo::new();
+    repo.commit("first");
+    let mut app = app_for(&repo);
+    app.open_dialog(terminal_git_graph::ui::dialog::Dialog::Error {
+        title: "Oops".to_string(),
+        message: family.repeat(20),
+    });
+    let out = screen(&app, 40, 20);
+    assert_eq!(out.matches(family).count(), 20, "{out}");
+}

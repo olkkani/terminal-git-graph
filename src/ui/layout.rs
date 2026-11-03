@@ -1,6 +1,7 @@
 //! Width-dependent layout decisions and display-width text fitting.
 
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// Width from which the author column is shown.
 pub const AUTHOR_MIN_WIDTH: u16 = 70;
@@ -25,15 +26,14 @@ pub fn columns_for(width: u16) -> Columns {
     }
 }
 
-fn char_width(c: char) -> usize {
-    c.width().unwrap_or(0)
-}
-
+/// Display width summed per grapheme cluster, so emoji with variation selectors,
+/// skin tones or ZWJ sequences count as the terminal (and ratatui) draws them.
 pub fn display_width(s: &str) -> usize {
-    s.chars().map(char_width).sum()
+    s.graphemes(true).map(UnicodeWidthStr::width).sum()
 }
 
-/// Cuts `s` to at most `width` display columns, ending in '…' when cut.
+/// Cuts `s` to at most `width` display columns, ending in '…' when cut. Never splits
+/// a grapheme cluster.
 pub fn truncate_to_width(s: &str, width: usize) -> String {
     if display_width(s) <= width {
         return s.to_string();
@@ -43,12 +43,12 @@ pub fn truncate_to_width(s: &str, width: usize) -> String {
     }
     let mut out = String::new();
     let mut used = 0;
-    for c in s.chars() {
-        let w = char_width(c);
+    for g in s.graphemes(true) {
+        let w = g.width();
         if used + w > width - 1 {
             break;
         }
-        out.push(c);
+        out.push_str(g);
         used += w;
     }
     out.push('…');

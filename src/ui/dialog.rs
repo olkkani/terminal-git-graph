@@ -5,6 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear};
 use ratatui::Frame;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::Command;
 use crate::git::validate_name;
@@ -178,13 +179,13 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     for source in text.lines() {
         let mut line = String::new();
         let mut used = 0;
-        for c in printable(source).chars() {
-            let w = display_width(c.encode_utf8(&mut [0; 4]));
+        for g in printable(source).graphemes(true) {
+            let w = display_width(g);
             if used + w > width && !line.is_empty() {
                 out.push(std::mem::take(&mut line));
                 used = 0;
             }
-            line.push(c);
+            line.push_str(g);
             used += w;
         }
         out.push(line);
