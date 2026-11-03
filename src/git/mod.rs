@@ -21,6 +21,8 @@ pub enum GitError {
     Spawn(std::io::Error),
     #[error("invalid name: {0:?}")]
     InvalidName(String),
+    #[error("unexpected git output: {0}")]
+    Parse(String),
 }
 
 impl GitError {
@@ -36,6 +38,7 @@ impl GitError {
             }
             GitError::Spawn(e) => e.to_string(),
             GitError::InvalidName(n) => format!("invalid name: {n:?}"),
+            GitError::Parse(m) => format!("unexpected git output: {m}"),
         }
     }
 }

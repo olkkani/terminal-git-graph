@@ -220,3 +220,28 @@ fn unborn_head_is_empty_even_under_non_english_locale() {
     assert!(commits.is_empty());
     assert_eq!(count_commits(&git, Scope::Current, true).unwrap(), 0);
 }
+
+#[test]
+fn all_branches_includes_detached_head_commit() {
+    let repo = TestRepo::new();
+    repo.commit("base");
+    repo.git(&["checkout", "--detach"]);
+    let detached = repo.commit("only reachable from HEAD");
+    repo.checkout("main");
+    repo.git(&["checkout", "--detach", &detached]);
+    let git = Git::at(repo.path());
+    let commits = load_commits(&git, &query(Scope::AllBranches, true, 0, PAGE_SIZE)).unwrap();
+    assert!(commits.iter().any(|c| c.hash == detached), "{commits:?}");
+    assert_eq!(count_commits(&git, Scope::AllBranches, true).unwrap(), 2);
+}
+
+#[test]
+fn all_branches_with_unborn_head_still_lists_branches() {
+    let repo = TestRepo::new();
+    repo.commit("on main");
+    repo.git(&["checkout", "--orphan", "fresh"]);
+    let git = Git::at(repo.path());
+    let commits = load_commits(&git, &query(Scope::AllBranches, true, 0, PAGE_SIZE)).unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(count_commits(&git, Scope::AllBranches, true).unwrap(), 1);
+}

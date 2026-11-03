@@ -40,12 +40,16 @@ pub struct LogQuery {
     pub limit: usize,
 }
 
-fn scope_args(scope: Scope, remotes: bool) -> Vec<&'static str> {
+/// `head` adds HEAD to All branches so a detached HEAD outside every ref still shows.
+fn scope_args(scope: Scope, remotes: bool, head: bool) -> Vec<&'static str> {
     match scope {
         Scope::AllBranches => {
             let mut v = vec!["--branches", "--tags"];
             if remotes {
                 v.push("--remotes");
+            }
+            if head {
+                v.push("HEAD");
             }
             v
         }
@@ -68,7 +72,7 @@ fn is_unborn_error(e: &GitError) -> bool {
 pub fn load_commits(git: &Git, q: &LogQuery) -> Result<Vec<Commit>, GitError> {
     let skip = q.skip.to_string();
     let limit = q.limit.to_string();
-    let mut args = vec![
+    let args = [
         "log",
         "--date-order",
         "-z",
@@ -78,13 +82,31 @@ pub fn load_commits(git: &Git, q: &LogQuery) -> Result<Vec<Commit>, GitError> {
         "-n",
         &limit,
     ];
-    args.extend(scope_args(q.scope, q.remotes));
-    args.push("--");
-    match git.run(&args) {
-        Ok(out) => Ok(out.split('\0').filter_map(parse_commit).collect()),
-        Err(e) if is_unborn_error(&e) => Ok(Vec::new()),
-        Err(e) => Err(e),
+    Ok(run_scoped(git, &args, q.scope, q.remotes)?
+        .map(|out| out.split('\0').filter_map(parse_commit).collect())
+        .unwrap_or_default())
+}
+
+/// Runs `base` + the scope's revisions + `--`. `None` when an unborn HEAD leaves nothing to list;
+/// for All branches an unborn HEAD is dropped and the branches are still listed.
+fn run_scoped(
+    git: &Git,
+    base: &[&str],
+    scope: Scope,
+    remotes: bool,
+) -> Result<Option<String>, GitError> {
+    for head in [true, false] {
+        let mut args = base.to_vec();
+        args.extend(scope_args(scope, remotes, head));
+        args.push("--");
+        match git.run(&args) {
+            Ok(out) => return Ok(Some(out)),
+            Err(e) if is_unborn_error(&e) && scope == Scope::AllBranches && head => continue,
+            Err(e) if is_unborn_error(&e) => return Ok(None),
+            Err(e) => return Err(e),
+        }
     }
+    Ok(None)
 }
 
 fn parse_commit(record: &str) -> Option<Commit> {
@@ -107,12 +129,26 @@ fn parse_commit(record: &str) -> Option<Commit> {
 }
 
 pub fn count_commits(git: &Git, scope: Scope, remotes: bool) -> Result<usize, GitError> {
-    let mut args = vec!["rev-list", "--count"];
-    args.extend(scope_args(scope, remotes));
-    args.push("--");
-    match git.run(&args) {
-        Ok(out) => Ok(out.trim().parse().unwrap_or(0)),
-        Err(e) if is_unborn_error(&e) => Ok(0),
-        Err(e) => Err(e),
+    match run_scoped(git, &["rev-list", "--count"], scope, remotes)? {
+        Some(out) => parse_count(&out),
+        None => Ok(0),
+    }
+}
+
+fn parse_count(out: &str) -> Result<usize, GitError> {
+    out.trim()
+        .parse()
+        .map_err(|_| GitError::Parse(format!("rev-list --count printed {:?}", out.trim())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn count_parses_number_and_rejects_garbage() {
+        assert_eq!(parse_count("42\n").unwrap(), 42);
+        assert!(parse_count("").is_err());
+        assert!(parse_count("not a number\n").is_err());
     }
 }
