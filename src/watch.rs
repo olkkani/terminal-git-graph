@@ -13,7 +13,7 @@ use crate::git::Git;
 pub enum WatchEvent {
     /// HEAD, a ref or packed-refs changed: the graph needs reloading.
     RefsChanged,
-    /// A working-tree file changed: only the status needs refreshing.
+    /// A working-tree file or the index changed: only the status needs refreshing.
     WorktreeChanged,
 }
 
@@ -135,6 +135,11 @@ impl Paths {
     fn classify_path(&self, path: &Path) -> Option<WatchEvent> {
         if path == self.git_dir.join("HEAD") {
             return Some(WatchEvent::RefsChanged);
+        }
+        // `git add`/`restore --staged` elsewhere change only the index. Safe to watch:
+        // tgg's own status reads never write it (`--no-optional-locks`).
+        if self.worktree.is_some() && path == self.git_dir.join("index") {
+            return Some(WatchEvent::WorktreeChanged);
         }
         if let Ok(rel) = path.strip_prefix(&self.common) {
             let is_ref = rel == Path::new("HEAD")

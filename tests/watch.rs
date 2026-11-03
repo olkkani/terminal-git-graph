@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use support::TestRepo;
 use terminal_git_graph::app::{App, Command};
+use terminal_git_graph::git::detail::load_worktree_changes;
+use terminal_git_graph::git::status::load_status;
 use terminal_git_graph::git::Git;
 use terminal_git_graph::input::Hit;
 use terminal_git_graph::ui::theme::ColorDepth;
@@ -86,6 +88,39 @@ fn index_lock_noise_is_ignored() {
     fs::write(git_dir.join("index.lock"), "x").unwrap();
     fs::remove_file(git_dir.join("index.lock")).unwrap();
     fs::write(git_dir.join("some-internal-file"), "x").unwrap();
+    assert_eq!(collect(&rx), Vec::<WatchEvent>::new());
+}
+
+#[test]
+fn staging_from_another_process_emits_worktree_changed() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    fs::write(repo.path().join("file-1.txt"), "edited\n").unwrap();
+    let (tx, rx) = channel();
+    let _handle = watch(&Git::at(repo.path()), tx).expect("start watcher");
+    sleep(Duration::from_millis(500));
+    while rx.try_recv().is_ok() {}
+    repo.git(&["add", "file-1.txt"]);
+    assert!(wait_for(&rx, WatchEvent::WorktreeChanged));
+    while rx.try_recv().is_ok() {}
+    repo.git(&["restore", "--staged", "file-1.txt"]);
+    assert!(wait_for(&rx, WatchEvent::WorktreeChanged));
+}
+
+#[test]
+fn own_status_reads_do_not_trigger_events() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    // Same content, newer mtime: plain `git status` would rewrite the index here.
+    sleep(Duration::from_millis(1100));
+    fs::write(repo.path().join("file-1.txt"), "first\n").unwrap();
+    let git = Git::at(repo.path());
+    let (tx, rx) = channel();
+    let _handle = watch(&git, tx).expect("start watcher");
+    sleep(Duration::from_millis(500));
+    while rx.try_recv().is_ok() {}
+    load_status(&git).unwrap();
+    load_worktree_changes(&git).unwrap();
     assert_eq!(collect(&rx), Vec::<WatchEvent>::new());
 }
 
