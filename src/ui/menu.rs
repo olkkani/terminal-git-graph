@@ -2,6 +2,7 @@
 //! moved back on screen when it would not fit, and scrolled when taller than the screen.
 
 use std::cell::Cell;
+use std::path::PathBuf;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -20,6 +21,10 @@ pub enum MenuId {
     Do(Action),
     /// Copies the text to the clipboard.
     Copy(String),
+    /// Opens the web page at this URL (empty when the remote has none).
+    OpenRemote(String),
+    /// Switches the graph to the repository at this path (Manygit's header dropdown).
+    SwitchRepo(PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

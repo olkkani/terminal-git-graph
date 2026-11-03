@@ -2,6 +2,7 @@
 
 pub mod scan;
 pub mod status;
+pub mod view;
 
 use std::path::PathBuf;
 

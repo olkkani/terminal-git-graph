@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 
 use crate::app::{App, Command};
 use crate::ui;
+use crate::ui::menu::Menu;
 
 /// Which part of the UI takes input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +20,8 @@ pub enum InputMode {
     Menu,
     /// A modal dialog: nothing else gets input.
     Dialog,
+    /// The Manygit repository list.
+    List,
 }
 
 /// Two clicks on the same cell within this many milliseconds are a double click.
@@ -79,6 +82,10 @@ pub enum ToolbarButton {
     Scope,
     Remotes,
     Fetch,
+    /// "‹ Manygit": back to the repository list.
+    Back,
+    /// The repository name: the dropdown of other repositories.
+    RepoName,
 }
 
 /// Maps a key press to a command in `mode`.
@@ -105,7 +112,8 @@ pub fn translate_key(key: KeyEvent, mode: InputMode) -> Option<Command> {
                 _ => None,
             };
         }
-        InputMode::Graph | InputMode::Detail | InputMode::Diff => {}
+        InputMode::List if key.code == KeyCode::Char('F') => return Some(Command::FetchAllRepos),
+        InputMode::Graph | InputMode::Detail | InputMode::Diff | InputMode::List => {}
     }
     // Movement depends on the focused view; [graph, file list, diff].
     let by_mode = |[graph, detail, diff]: [Command; 3]| match mode {
@@ -146,6 +154,7 @@ pub fn translate_key(key: KeyEvent, mode: InputMode) -> Option<Command> {
         KeyCode::Char('a') => Command::ToggleScope,
         KeyCode::Char('r') => Command::ToggleRemotes,
         KeyCode::Char('f') => Command::Fetch,
+        KeyCode::Char('s') if mode == InputMode::Graph => Command::RepoMenu,
         KeyCode::Char('?') => Command::Help,
         KeyCode::F(5) | KeyCode::Char('R') => Command::Refresh,
         _ => return None,
@@ -178,26 +187,8 @@ pub fn mouse_command(
 ) -> Option<Command> {
     let pos = (ev.column, ev.row);
     match app.input_mode() {
-        InputMode::Dialog => None,
-        InputMode::Menu => {
-            let menu = app.menu.as_ref()?;
-            match ev.kind {
-                MouseEventKind::Down(MouseButton::Left) => {
-                    if let Some(i) = menu.item_at(area, pos) {
-                        Some(Command::MenuPick(i))
-                    } else if menu
-                        .rect(area)
-                        .contains(ratatui::layout::Position::new(pos.0, pos.1))
-                    {
-                        None
-                    } else {
-                        Some(Command::MenuClose)
-                    }
-                }
-                MouseEventKind::Down(_) => Some(Command::MenuClose),
-                _ => None,
-            }
-        }
+        InputMode::Dialog | InputMode::List => None,
+        InputMode::Menu => menu_mouse(app.menu.as_ref()?, area, ev),
         mode => match ev.kind {
             MouseEventKind::ScrollUp => translate_key(KeyEvent::from(KeyCode::Up), mode),
             MouseEventKind::ScrollDown => translate_key(KeyEvent::from(KeyCode::Down), mode),
@@ -216,6 +207,8 @@ pub fn mouse_command(
                     (Hit::Toolbar(ToolbarButton::Scope), _) => Command::ToggleScope,
                     (Hit::Toolbar(ToolbarButton::Remotes), _) => Command::ToggleRemotes,
                     (Hit::Toolbar(ToolbarButton::Fetch), _) => Command::Fetch,
+                    (Hit::Toolbar(ToolbarButton::Back), _) => Command::BackToList,
+                    (Hit::Toolbar(ToolbarButton::RepoName), _) => Command::RepoMenu,
                 })
             }
             MouseEventKind::Down(MouseButton::Right) => match hit_test(app, area, pos)? {
@@ -224,5 +217,26 @@ pub fn mouse_command(
             },
             _ => None,
         },
+    }
+}
+
+/// A click with a menu open: picks the item under it, or closes the menu when outside.
+pub(crate) fn menu_mouse(menu: &Menu, area: Rect, ev: MouseEvent) -> Option<Command> {
+    let pos = (ev.column, ev.row);
+    match ev.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            if let Some(i) = menu.item_at(area, pos) {
+                Some(Command::MenuPick(i))
+            } else if menu
+                .rect(area)
+                .contains(ratatui::layout::Position::new(pos.0, pos.1))
+            {
+                None
+            } else {
+                Some(Command::MenuClose)
+            }
+        }
+        MouseEventKind::Down(_) => Some(Command::MenuClose),
+        _ => None,
     }
 }

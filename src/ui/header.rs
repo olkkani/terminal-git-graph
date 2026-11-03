@@ -1,5 +1,5 @@
-//! Header line: current branch, loaded commit count, the last refresh error and the
-//! Fetch/scope/remotes toolbar.
+//! Header line: in Manygit, "‹ Manygit" and the repository name; then the current
+//! branch, loaded commit count, the last refresh error and the Fetch/scope/remotes toolbar.
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -17,7 +17,11 @@ const REFRESH_ERROR_MAX: usize = 40;
 
 pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
     let width = area.width as usize;
-    let (mut spans, used) = left_spans(app, width);
+    let nav = nav_spans(app, width);
+    let nav_w = spans_width(&nav);
+    let (mut spans, used) = left_spans(app, width - nav_w);
+    let used = used + nav_w;
+    spans.splice(0..0, nav.into_iter().map(|(s, _)| s));
     if let Some(toolbar) = toolbar(app, width - used) {
         let toolbar_w: usize = toolbar.iter().map(|(s, _)| display_width(&s.content)).sum();
         spans.push(Span::raw(" ".repeat(width - used - toolbar_w)));
@@ -29,7 +33,18 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
 /// The toolbar button at column `x` of the header drawn in `area`.
 pub(crate) fn button_at(app: &App, area: Rect, x: u16) -> Option<ToolbarButton> {
     let width = area.width as usize;
-    let (_, used) = left_spans(app, width);
+    let nav = nav_spans(app, width);
+    let nav_w = spans_width(&nav);
+    let mut start = area.x as usize;
+    for (span, button) in nav {
+        let end = start + display_width(&span.content);
+        if (start..end).contains(&(x as usize)) {
+            return button;
+        }
+        start = end;
+    }
+    let (_, used) = left_spans(app, width - nav_w);
+    let used = used + nav_w;
     let toolbar = toolbar(app, width - used)?;
     let toolbar_w: usize = toolbar.iter().map(|(s, _)| display_width(&s.content)).sum();
     let mut start = area.x as usize + width - toolbar_w;
@@ -41,6 +56,38 @@ pub(crate) fn button_at(app: &App, area: Rect, x: u16) -> Option<ToolbarButton> 
         start = end;
     }
     None
+}
+
+/// Column where the repository name starts, when the graph was opened from Manygit.
+pub(crate) fn repo_name_x(app: &App) -> Option<u16> {
+    app.repo_name()?;
+    Some(display_width(BACK) as u16)
+}
+
+const BACK: &str = "‹ Manygit ";
+
+fn spans_width(spans: &[(Span, Option<ToolbarButton>)]) -> usize {
+    spans.iter().map(|(s, _)| display_width(&s.content)).sum()
+}
+
+/// "‹ Manygit" and the repository name (with a dropdown mark) when the graph was opened
+/// from the Manygit list, cut to `width`.
+fn nav_spans(app: &App, width: usize) -> Vec<(Span<'static>, Option<ToolbarButton>)> {
+    let Some(name) = app.repo_name() else {
+        return Vec::new();
+    };
+    let back = truncate_to_width(BACK, width);
+    let name = truncate_to_width(&format!("{name} ▾ "), width - display_width(&back));
+    vec![
+        (
+            Span::styled(back, Style::new().fg(Color::Cyan)),
+            Some(ToolbarButton::Back),
+        ),
+        (
+            Span::styled(name, Style::new().add_modifier(Modifier::UNDERLINED)),
+            Some(ToolbarButton::RepoName),
+        ),
+    ]
 }
 
 /// Branch, commit count and refresh error, with their width.

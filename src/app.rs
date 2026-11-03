@@ -3,6 +3,7 @@
 
 use std::cell::Cell;
 use std::io;
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use crate::actions::{needs_confirm, Action};
@@ -21,7 +22,7 @@ use crate::jobs::JobRunner;
 use crate::menus::{confirm_dialog, input_dialog, menu_for, with_value, MenuCtx, Target};
 use crate::ui;
 use crate::ui::dialog::{Dialog, DialogOutcome, DialogState};
-use crate::ui::menu::{Menu, MenuId};
+use crate::ui::menu::{Menu, MenuId, MenuItem};
 use crate::ui::theme::ColorDepth;
 use crate::watch::WatchEvent;
 
@@ -98,6 +99,12 @@ pub enum Command {
     },
     Fetch,
     Help,
+    /// Manygit: leaves the graph for the repository list.
+    BackToList,
+    /// Manygit: opens the dropdown of repositories to switch to.
+    RepoMenu,
+    /// Manygit list: fetches every repository that has a remote.
+    FetchAllRepos,
 }
 
 /// The key bindings shown by `Help`.
@@ -113,9 +120,24 @@ m              Menu of that label, else the row (right click)
 a              All branches / current branch
 r              Show/hide remotes
 f              Fetch
+s              Switch repository (Manygit)
 R, F5          Refresh
 ?              This help
 q              Quit";
+
+/// Where a graph opened from the Manygit list sits among its siblings.
+struct RepoNav {
+    name: String,
+    /// Every listed repository as (name, path), in list order.
+    repos: Vec<(String, PathBuf)>,
+}
+
+/// What a graph opened from the Manygit list asks the list to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NavRequest {
+    ToList,
+    Switch(PathBuf),
+}
 
 /// A menu action waiting on the dialog it opened.
 enum Pending {
@@ -216,6 +238,9 @@ pub struct App {
     job: Option<Receiver<Result<String, GitError>>>,
     copier: fn(&str) -> io::Result<CopyVia>,
     quit: bool,
+    /// Set when the graph was opened from the Manygit list.
+    nav: Option<RepoNav>,
+    nav_request: Option<NavRequest>,
 }
 
 impl App {
@@ -252,6 +277,8 @@ impl App {
             job: None,
             copier: clipboard::copy,
             quit: false,
+            nav: None,
+            nav_request: None,
         };
         app.reload()?;
         Ok(app)
@@ -437,6 +464,11 @@ impl App {
                     match id {
                         MenuId::Do(a) => self.begin(a),
                         MenuId::Copy(text) => self.copy(text),
+                        MenuId::SwitchRepo(path) => {
+                            self.nav_request = Some(NavRequest::Switch(path))
+                        }
+                        // Only the Manygit list offers it.
+                        MenuId::OpenRemote(_) => {}
                     }
                 }
             }
@@ -468,6 +500,13 @@ impl App {
                 title: "Keys".to_string(),
                 body: HELP.to_string(),
             }),
+            Command::BackToList => {
+                if self.nav.is_some() {
+                    self.nav_request = Some(NavRequest::ToList);
+                }
+            }
+            Command::RepoMenu => self.open_repo_menu(),
+            Command::FetchAllRepos => {}
             // Dialog input is handled above while one is open; resolve() replaced
             // Activate/Back.
             Command::DialogAccept
@@ -530,6 +569,7 @@ impl App {
             Command::Activate if self.detail_open() => Command::FocusFiles,
             Command::Activate => Command::OpenDetail,
             Command::Back if self.detail_open() => Command::CloseDetail,
+            Command::Back if self.nav.is_some() => Command::BackToList,
             Command::Back => Command::Quit,
             c => c,
         }
@@ -640,6 +680,48 @@ impl App {
 
     pub fn should_quit(&self) -> bool {
         self.quit
+    }
+
+    pub fn git(&self) -> &Git {
+        &self.git
+    }
+
+    /// Marks the graph as opened from the Manygit list: the header gets "‹ Manygit" and
+    /// the repository name, whose dropdown lists `repos` as (name, path).
+    pub fn embed(&mut self, name: String, repos: Vec<(String, PathBuf)>) {
+        self.nav = Some(RepoNav { name, repos });
+    }
+
+    /// The name shown in the header when opened from the Manygit list.
+    pub(crate) fn repo_name(&self) -> Option<&str> {
+        self.nav.as_ref().map(|n| n.name.as_str())
+    }
+
+    /// Takes what the graph asked the Manygit list to do, if anything.
+    pub fn take_nav_request(&mut self) -> Option<NavRequest> {
+        self.nav_request.take()
+    }
+
+    /// Opens the dropdown of listed repositories below the header name; the open one
+    /// is shown but disabled.
+    fn open_repo_menu(&mut self) {
+        let Some(nav) = &self.nav else { return };
+        let items = nav
+            .repos
+            .iter()
+            .map(|(name, path)| MenuItem {
+                label: name.clone(),
+                enabled: path.as_path() != self.git.dir(),
+                danger: false,
+                id: MenuId::SwitchRepo(path.clone()),
+            })
+            .collect();
+        let anchor = ui::header::repo_name_x(self).map(|x| (x, 1));
+        self.menu = Some(Menu::new(
+            items,
+            anchor,
+            Hit::Toolbar(crate::input::ToolbarButton::RepoName),
+        ));
     }
 
     /// Asks for a missing value, then confirmation when the action needs it, then runs it.
@@ -935,7 +1017,7 @@ impl App {
 }
 
 /// What a failed action shows: git's own message, or why the action refused to run.
-fn action_error_message(e: &GitError) -> String {
+pub(crate) fn action_error_message(e: &GitError) -> String {
     match e {
         // Raised by the action itself (e.g. no remote to push to), not by unreadable git output.
         GitError::Parse(reason) => {
