@@ -84,7 +84,9 @@ pub fn needs_confirm(a: &Action) -> bool {
 pub fn execute(git: &Git, a: &Action) -> Result<String, GitError> {
     validate_all(&names_of(a))?;
     match a {
-        Action::CheckoutBranch(name) => git.run(&["checkout", name]),
+        // `--` ends the revision: a name that is only a path fails instead of
+        // discarding that file's changes.
+        Action::CheckoutBranch(name) => git.run(&["checkout", name, "--"]),
         Action::CheckoutRemote {
             remote,
             branch,
@@ -106,7 +108,7 @@ pub fn execute(git: &Git, a: &Action) -> Result<String, GitError> {
         Action::RebaseOnto(target) => git.run(&["rebase", target]),
         Action::PushBranch { remote, name } => {
             let remote = resolve_remote(git, remote, Some(name))?;
-            run_network(git, &["push", &remote, name])
+            push_branch(git, &remote, name)
         }
         Action::AddTag {
             hash,
@@ -149,7 +151,7 @@ pub fn execute(git: &Git, a: &Action) -> Result<String, GitError> {
             let branch = branch.trim();
             validate_name(branch)?;
             let remote = resolve_remote(git, "", Some(branch))?;
-            run_network(git, &["push", &remote, branch])
+            push_branch(git, &remote, branch)
         }
     }
 }
@@ -177,6 +179,20 @@ fn run_network(git: &Git, args: &[&str]) -> Result<String, GitError> {
     let user_ssh_env =
         std::env::var_os("GIT_SSH_COMMAND").is_some() || std::env::var_os("GIT_SSH").is_some();
     git.run_with_env(args, &network_env(git, user_ssh_env))
+}
+
+/// Pushes `name`, setting it as the upstream (`-u`) when the branch has none yet.
+fn push_branch(git: &Git, remote: &str, name: &str) -> Result<String, GitError> {
+    let key = format!("branch.{name}.remote");
+    let has_upstream = git
+        .run(&["config", "--get", &key])
+        .is_ok_and(|out| !out.trim().is_empty());
+    let mut args = vec!["push"];
+    if !has_upstream {
+        args.push("-u");
+    }
+    args.extend([remote, name]);
+    run_network(git, &args)
 }
 
 /// The user-supplied name/ref arguments of an action. An empty push remote is resolved later.

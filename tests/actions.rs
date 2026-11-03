@@ -738,3 +738,47 @@ fn network_actions_pass_batch_ssh_command() {
         );
     }
 }
+
+#[test]
+fn checkout_of_a_path_name_never_touches_the_file() {
+    let repo = TestRepo::new();
+    repo.commit_file("feature", "committed\n", "a");
+    fs::write(repo.path().join("feature"), "local edit\n").unwrap();
+    let git = Git::at(repo.path());
+    assert!(execute(&git, &Action::CheckoutBranch(s("feature"))).is_err());
+    assert_eq!(
+        fs::read_to_string(repo.path().join("feature")).unwrap(),
+        "local edit\n"
+    );
+    // A real branch with the same name as a file still checks out.
+    repo.git(&["stash"]);
+    repo.branch("feature");
+    execute(&git, &Action::CheckoutBranch(s("feature"))).unwrap();
+    assert_eq!(current_branch(&repo), "feature");
+}
+
+#[test]
+fn first_push_sets_upstream() {
+    let repo = TestRepo::new();
+    repo.commit("a");
+    let _bare = repo.add_bare_remote("origin");
+    repo.branch("topic");
+    repo.checkout("topic");
+    repo.commit("t");
+    let git = Git::at(repo.path());
+    execute(&git, &Action::PushCurrent).unwrap();
+    let upstream = repo.git(&["rev-parse", "--abbrev-ref", "topic@{upstream}"]);
+    assert_eq!(upstream.trim(), "origin/topic");
+
+    repo.branch("other");
+    execute(
+        &git,
+        &Action::PushBranch {
+            remote: s(""),
+            name: s("other"),
+        },
+    )
+    .unwrap();
+    let upstream = repo.git(&["rev-parse", "--abbrev-ref", "other@{upstream}"]);
+    assert_eq!(upstream.trim(), "origin/other");
+}
