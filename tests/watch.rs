@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use support::TestRepo;
 use terminal_git_graph::app::{App, Command};
 use terminal_git_graph::git::Git;
+use terminal_git_graph::input::Hit;
 use terminal_git_graph::ui::theme::ColorDepth;
 use terminal_git_graph::watch::{watch, WatchEvent, WatchHandle, DEBOUNCE_MS};
 
@@ -216,4 +217,41 @@ fn failed_refresh_keeps_view_and_reports_error() {
     app.on_watch(WatchEvent::RefsChanged);
     assert_eq!(app.refresh_error(), None);
     assert_eq!(app.selected_hash(), Some(top.as_str()));
+}
+
+#[test]
+fn worktree_change_closes_open_menu() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.commit("second");
+    let mut app = App::new(Git::at(repo.path()), ColorDepth::Indexed256).unwrap();
+    app.apply(Command::OpenMenuAt {
+        pos: (5, 2),
+        hit: Hit::Row(1),
+    })
+    .unwrap();
+    assert!(app.menu().is_some());
+
+    // The uncommitted row shifts every row down by one.
+    fs::write(repo.path().join("new.txt"), "new\n").unwrap();
+    app.on_watch(WatchEvent::WorktreeChanged);
+    assert!(app.menu().is_none());
+}
+
+#[test]
+fn refs_change_closes_open_menu() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.commit("second");
+    let mut app = App::new(Git::at(repo.path()), ColorDepth::Indexed256).unwrap();
+    app.apply(Command::OpenMenuAt {
+        pos: (5, 2),
+        hit: Hit::Row(1),
+    })
+    .unwrap();
+    assert!(app.menu().is_some());
+
+    repo.commit("third");
+    app.on_watch(WatchEvent::RefsChanged);
+    assert!(app.menu().is_none());
 }

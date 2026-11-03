@@ -389,6 +389,10 @@ impl App {
             WatchEvent::RefsChanged => self.reload(),
             WatchEvent::WorktreeChanged => self.refresh_status(),
         };
+        // A menu targets a row index, which a reload may have pointed at another commit.
+        if result.is_ok() {
+            self.menu = None;
+        }
         self.refresh_error = result.err().map(|e| e.message());
         self.follow_selection();
     }
@@ -626,6 +630,7 @@ impl App {
             .and_then(|h| self.commits.iter().position(|c| c.hash == h))
             .map_or(0, |i| i + usize::from(self.has_uncommitted()));
         self.invalidate_uncommitted_detail();
+        self.menu = None;
         self.refresh_error = None;
         Ok(())
     }
