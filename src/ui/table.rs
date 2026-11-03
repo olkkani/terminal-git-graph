@@ -11,6 +11,7 @@ use crate::app::{App, Row};
 use crate::git::refs::{Head, RefKind, RefLabel};
 use crate::graph::render::{render_row, render_uncommitted, Cell, RenderOpts};
 use crate::input::Hit;
+use crate::ui::glyphs::{badge_glyphs, BadgeGlyphs};
 use crate::ui::layout::{columns_for, display_width, fit_to_width, truncate_to_width};
 use crate::ui::theme;
 
@@ -244,11 +245,11 @@ fn graph_spans(cells: &[Cell], width: usize, app: &App) -> Vec<Span<'static>> {
     spans
 }
 
-fn label_text(app: &App, label: &RefLabel) -> String {
+fn label_text(app: &App, label: &RefLabel, glyphs: &BadgeGlyphs) -> String {
     match label.kind {
         RefKind::LocalBranch => {
             let checked = matches!(&app.refs.head, Head::Branch(b) if *b == label.name);
-            let check = if checked { "✓" } else { "" };
+            let check = if checked { glyphs.check } else { "" };
             let mut text = format!("{check}{}", label.name);
             if app.remotes {
                 for r in &label.remotes {
@@ -274,6 +275,7 @@ fn badge_spans(
     budget: usize,
     focus: Option<usize>,
 ) -> (Vec<Span<'static>>, usize, BadgePlaces) {
+    let glyphs = badge_glyphs(app.nerd_font, app.ascii);
     let lane = theme::lane_color(color, app.depth);
     let mut spans = Vec::new();
     let mut used = 0;
@@ -282,29 +284,65 @@ fn badge_spans(
         if label.kind == RefKind::RemoteBranch && !app.remotes {
             continue;
         }
+        let checked = match label.kind {
+            RefKind::Head => true,
+            RefKind::LocalBranch => matches!(&app.refs.head, Head::Branch(b) if *b == label.name),
+            _ => false,
+        };
         let style = match label.kind {
-            RefKind::Head | RefKind::LocalBranch => Style::new()
+            RefKind::Head | RefKind::LocalBranch if checked => Style::new()
                 .fg(Color::Black)
                 .bg(lane)
                 .add_modifier(Modifier::BOLD),
-            RefKind::RemoteBranch => Style::new().fg(lane).add_modifier(Modifier::BOLD),
-            RefKind::Tag => Style::new().fg(Color::Black).bg(theme::muted(app.depth)),
+            RefKind::Head | RefKind::LocalBranch => Style::new()
+                .fg(Color::Black)
+                .bg(theme::lane_light(color, app.depth)),
+            RefKind::RemoteBranch => Style::new()
+                .fg(lane)
+                .bg(theme::lane_dark(color, app.depth))
+                .add_modifier(Modifier::BOLD),
+            RefKind::Tag => Style::new()
+                .fg(theme::muted(app.depth))
+                .bg(theme::muted_dark(app.depth)),
         };
         let style = if focus == Some(index) {
             style.add_modifier(Modifier::REVERSED | Modifier::UNDERLINED)
         } else {
             style
         };
-        let text = label_text(app, label);
-        let w = display_width(&text);
+        let icon = match label.kind {
+            RefKind::Head | RefKind::LocalBranch => glyphs.local,
+            RefKind::RemoteBranch => glyphs.remote,
+            RefKind::Tag => glyphs.tag,
+        };
+        let icon = if icon.is_empty() {
+            String::new()
+        } else {
+            format!("{icon} ")
+        };
+        // Round caps replace the padding space on each side.
+        let (left, right) = if glyphs.left_cap.is_empty() {
+            (" ", " ")
+        } else {
+            ("", "")
+        };
+        let body = format!("{left}{icon}{}{right}", label_text(app, label, &glyphs));
+        let caps = display_width(glyphs.left_cap) + display_width(glyphs.right_cap);
+        let w = display_width(&body) + caps;
         let remaining = budget - used;
         if w < remaining {
             places.push((index, used..used + w));
-            spans.push(Span::styled(text, style));
+            if !glyphs.left_cap.is_empty() {
+                spans.push(Span::styled(glyphs.left_cap, cap_style(&style)));
+            }
+            spans.push(Span::styled(body, style));
+            if !glyphs.right_cap.is_empty() {
+                spans.push(Span::styled(glyphs.right_cap, cap_style(&style)));
+            }
             spans.push(Span::raw(" "));
             used += w + 1;
         } else {
-            let cut = truncate_to_width(&text, remaining.saturating_sub(1));
+            let cut = truncate_to_width(&body, remaining.saturating_sub(1));
             if !cut.is_empty() {
                 let w = display_width(&cut);
                 places.push((index, used..used + w));
@@ -316,4 +354,11 @@ fn badge_spans(
         }
     }
     (spans, used, places)
+}
+
+/// A cap is drawn in the pill's color on the row's own background.
+fn cap_style(pill: &Style) -> Style {
+    let mut style = Style::new();
+    style.fg = pill.bg;
+    style
 }

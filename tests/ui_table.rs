@@ -450,7 +450,8 @@ fn detached_head_row_shows_head_badge() {
         .iter()
         .find(|l| l.contains("first"))
         .expect("row of first");
-    assert!(row.contains("HEAD first"), "{rows:?}");
+    // The badge is a padded pill, so a space of padding separates it from the subject.
+    assert!(row.contains("HEAD  first"), "{rows:?}");
 }
 
 const HEART: &str = "❤️";

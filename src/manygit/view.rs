@@ -164,6 +164,7 @@ pub struct Manygit {
     depth: ColorDepth,
     /// Opened graphs draw with ASCII characters.
     ascii: bool,
+    nerd_font: bool,
     /// Selected entry.
     selected: usize,
     /// First visible line; adjusted while drawing to keep the selection in view.
@@ -205,6 +206,7 @@ impl Manygit {
             show_tags,
             depth,
             ascii: false,
+            nerd_font: false,
             selected: 0,
             offset: Cell::new(0),
             page_height: Cell::new(1),
@@ -358,6 +360,11 @@ impl Manygit {
     /// Opened graphs draw with ASCII characters instead of box drawing.
     pub fn set_ascii(&mut self, ascii: bool) {
         self.ascii = ascii;
+    }
+
+    /// Opened graphs end ref badges in round caps.
+    pub fn set_nerd_font(&mut self, on: bool) {
+        self.nerd_font = on;
     }
 
     /// Passes a filesystem change to the shown graph; the list ignores it.
@@ -586,6 +593,7 @@ impl Manygit {
                     app.embed(entry.name.clone(), repos);
                     app.set_copier(self.copier);
                     app.set_ascii(self.ascii);
+                    app.set_nerd_font(self.nerd_font);
                     self.apps.insert(path.clone(), app);
                 }
                 Err(e) => {

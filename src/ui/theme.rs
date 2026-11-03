@@ -56,6 +56,30 @@ pub fn muted(depth: ColorDepth) -> Color {
     convert(MUTED, depth)
 }
 
+/// Pale version of a lane color, for the background of a non-checked-out local branch.
+pub fn lane_light(index: usize, depth: ColorDepth) -> Color {
+    convert(
+        mix(PALETTE[index % PALETTE_LEN], (255, 255, 255), 0.55),
+        depth,
+    )
+}
+
+/// Dark tint of a lane color, for the background of remote branch badges.
+pub fn lane_dark(index: usize, depth: ColorDepth) -> Color {
+    convert(mix(PALETTE[index % PALETTE_LEN], (0, 0, 0), 0.7), depth)
+}
+
+/// Dark tint of the muted gray, for the background of tag badges.
+pub fn muted_dark(depth: ColorDepth) -> Color {
+    convert(mix(MUTED, (0, 0, 0), 0.7), depth)
+}
+
+/// `a` moved `t` of the way towards `b`.
+fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    (m(a.0, b.0), m(a.1, b.1), m(a.2, b.2))
+}
+
 fn convert(rgb: Rgb, depth: ColorDepth) -> Color {
     match depth {
         ColorDepth::TrueColor => Color::Rgb(rgb.0, rgb.1, rgb.2),

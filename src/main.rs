@@ -85,6 +85,7 @@ fn start(path: &Path) -> Result<(), Failure> {
         RepoTarget::Repo { git, .. } => {
             let mut app = App::new(git, depth)?;
             app.set_ascii(ascii);
+            app.set_nerd_font(config.nerd_font);
             show(&mut app, warning)
         }
         RepoTarget::Folder(folder) => {
@@ -93,6 +94,7 @@ fn start(path: &Path) -> Result<(), Failure> {
             let entries = scan(&root, config.scan_depth, &home)?;
             let mut list = Manygit::new(root, entries, config.show_tags, depth);
             list.set_ascii(ascii);
+            list.set_nerd_font(config.nerd_font);
             show(&mut list, warning)
         }
     }

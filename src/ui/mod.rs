@@ -1,6 +1,7 @@
 pub mod detail;
 pub mod dialog;
 pub mod diff;
+pub mod glyphs;
 pub mod header;
 pub mod layout;
 pub mod menu;

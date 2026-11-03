@@ -208,6 +208,7 @@ pub struct App {
     pub(crate) depth: ColorDepth,
     /// Draw the graph with ASCII instead of box-drawing characters.
     pub(crate) ascii: bool,
+    pub(crate) nerd_font: bool,
     bare: bool,
     pub(crate) scope: Scope,
     pub(crate) remotes: bool,
@@ -256,6 +257,7 @@ impl App {
             git,
             depth,
             ascii: false,
+            nerd_font: false,
             bare,
             scope: Scope::AllBranches,
             remotes: true,
@@ -674,6 +676,11 @@ impl App {
     /// Draws the graph with ASCII characters, for terminals without box drawing.
     pub fn set_ascii(&mut self, ascii: bool) {
         self.ascii = ascii;
+    }
+
+    /// Ends ref badges in round caps; needs a font with those glyphs.
+    pub fn set_nerd_font(&mut self, on: bool) {
+        self.nerd_font = on;
     }
 
     /// Replaces the clipboard writer (tests use one that cannot touch the real clipboard).
