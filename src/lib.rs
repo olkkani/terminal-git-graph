@@ -1,8 +1,11 @@
 pub mod actions;
 pub mod app;
+pub mod clipboard;
 pub mod git;
 pub mod graph;
 pub mod input;
+pub mod jobs;
+pub mod menus;
 pub mod repo;
 pub mod terminal;
 pub mod ui;

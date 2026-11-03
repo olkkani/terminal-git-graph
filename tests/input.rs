@@ -67,7 +67,7 @@ fn item(label: &str, enabled: bool) -> MenuItem {
         label: label.to_string(),
         enabled,
         danger: false,
-        id: MenuId::Noop,
+        id: MenuId::Copy(label.to_string()),
     }
 }
 
@@ -184,6 +184,32 @@ fn click_on_row_selects_it() {
 }
 
 #[test]
+fn double_click_on_label_activates_that_label() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.branch("alpha");
+    let app = app_for(&repo);
+    let rows = render(&app, W, H);
+    let byte = rows[1].find("alpha").expect("alpha label");
+    let pos = (rows[1][..byte].width() as u16, 1);
+    let hit = hit_test(&app, screen_area(), pos);
+    let Some(Hit::Label { row, index }) = hit else {
+        panic!("expected a label at {pos:?}, got {hit:?}");
+    };
+    let mut clicks = ClickTracker::new();
+    let now = Instant::now();
+    let ev = mouse(MouseEventKind::Down(MouseButton::Left), pos.0, pos.1);
+    assert_eq!(
+        mouse_command(&app, screen_area(), ev, &mut clicks, now),
+        Some(Command::SelectRow(row))
+    );
+    assert_eq!(
+        mouse_command(&app, screen_area(), ev, &mut clicks, now),
+        Some(Command::ActivateLabel { row, index })
+    );
+}
+
+#[test]
 fn click_on_label_targets_that_label() {
     let repo = TestRepo::new();
     let hash = repo.commit("first");
@@ -251,9 +277,15 @@ fn right_click_opens_menu_at_position() {
     assert_eq!(menu.target, Hit::Row(1));
     // The clicked row becomes the selection.
     assert_eq!(app.selected_hash(), Some(hashes[1].as_str()));
-    // The menu box is drawn with its corner at the click.
+    // The menu box is drawn at the click's column; the commit menu is taller than this
+    // screen, so it is moved up to stay inside.
+    let rect = app.menu().unwrap().rect(screen_area());
     let rows = render(&app, W, H);
-    assert!(rows[2][..].chars().nth(30) == Some('┌'), "{rows:#?}");
+    assert_eq!(rect.x, 30);
+    assert!(
+        rows[rect.y as usize].chars().nth(30) == Some('┌'),
+        "{rows:#?}"
+    );
 
     // While the menu is open, graph keys don't reach the table.
     assert_eq!(

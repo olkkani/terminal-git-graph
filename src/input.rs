@@ -205,7 +205,10 @@ pub fn mouse_command(
                     (Hit::Row(row) | Hit::Label { row, .. }, ClickKind::Single) => {
                         Command::SelectRow(row)
                     }
-                    (Hit::Row(_) | Hit::Label { .. }, ClickKind::Double) => Command::Activate,
+                    (Hit::Row(_), ClickKind::Double) => Command::Activate,
+                    (Hit::Label { row, index }, ClickKind::Double) => {
+                        Command::ActivateLabel { row, index }
+                    }
                     (Hit::File(i), ClickKind::Single) => Command::SelectFile(i),
                     (Hit::File(_), ClickKind::Double) => Command::OpenDiff,
                     (Hit::Toolbar(ToolbarButton::Scope), _) => Command::ToggleScope,

@@ -44,7 +44,7 @@ pub fn restore() -> io::Result<()> {
 const INPUT_POLL: Duration = Duration::from_millis(50);
 
 /// Runs the app until it quits, always restoring the terminal. Filesystem changes
-/// arriving on `watch` refresh the view.
+/// arriving on `watch` and finished git actions refresh the view.
 pub fn run(app: &mut App, watch: &Receiver<WatchEvent>) -> Result<(), Box<dyn Error>> {
     let mut term = enter()?;
     let result = event_loop(&mut term, app, watch);
@@ -64,9 +64,10 @@ fn event_loop(
         if app.load_pending()? {
             continue;
         }
-        // Wait for either input or a filesystem change; a change redraws.
+        // Wait for input, a filesystem change or a finished action; the latter two redraw.
         let mut changed = false;
         while !changed && !event::poll(INPUT_POLL)? {
+            changed = app.poll_job();
             for ev in watch.try_iter() {
                 app.on_watch(ev);
                 changed = true;

@@ -29,6 +29,11 @@ pub enum Dialog {
         title: String,
         message: String,
     },
+    /// Read-only text, such as the key bindings.
+    Info {
+        title: String,
+        body: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +98,7 @@ impl DialogState {
             Dialog::Confirm { title, danger, .. } => (title, *danger),
             Dialog::Input { title, .. } => (title, false),
             Dialog::Error { title, .. } => (title, true),
+            Dialog::Info { title, .. } => (title, false),
         };
 
         let mut lines: Vec<Line> = Vec::new();
@@ -117,8 +123,8 @@ impl DialogState {
                 }
                 Line::raw("[Enter] OK  [Esc] Cancel")
             }
-            Dialog::Error { message, .. } => {
-                lines.extend(wrap(message, inner_w).into_iter().map(Line::raw));
+            Dialog::Error { message: text, .. } | Dialog::Info { body: text, .. } => {
+                lines.extend(wrap(text, inner_w).into_iter().map(Line::raw));
                 Line::raw("[Enter] Close")
             }
         };

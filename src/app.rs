@@ -2,7 +2,11 @@
 //! and the commit detail / file diff opened from it.
 
 use std::cell::Cell;
+use std::io;
+use std::sync::mpsc::{Receiver, TryRecvError};
 
+use crate::actions::{needs_confirm, Action};
+use crate::clipboard::{self, CopyVia};
 use crate::git::detail::{
     load_file_diff, load_worktree_changes, load_worktree_diff, CommitDetail, DetailCache,
     FileChange,
@@ -13,9 +17,11 @@ use crate::git::status::{load_status, WorkStatus};
 use crate::git::{Git, GitError};
 use crate::graph::lanes::{GraphRow, LaneBuilder};
 use crate::input::{Hit, InputMode};
+use crate::jobs::JobRunner;
+use crate::menus::{confirm_dialog, input_dialog, menu_for, with_value, MenuCtx, Target};
 use crate::ui;
-use crate::ui::dialog::{Dialog, DialogState};
-use crate::ui::menu::Menu;
+use crate::ui::dialog::{Dialog, DialogOutcome, DialogState};
+use crate::ui::menu::{Menu, MenuId};
 use crate::ui::theme::ColorDepth;
 use crate::watch::WatchEvent;
 
@@ -77,8 +83,37 @@ pub enum Command {
     DialogCancel,
     DialogChar(char),
     DialogBackspace,
+    /// Double click on a ref label: checks out a local branch, asks a local name for a
+    /// remote branch, otherwise opens the detail like a double click on the row.
+    ActivateLabel {
+        row: usize,
+        index: usize,
+    },
     Fetch,
     Help,
+}
+
+/// The key bindings shown by `Help`.
+const HELP: &str = "\
+j/k, Up/Down   Move
+PgUp/PgDn      Page
+g/G, Home/End  First/last
+Enter          Open detail / file list / diff
+Tab            Switch table and file list
+Esc            Back
+m              Menu (right click)
+a              All branches / current branch
+r              Show/hide remotes
+f              Fetch
+R, F5          Refresh
+?              This help
+q              Quit";
+
+/// A menu action waiting on the dialog it opened.
+enum Pending {
+    /// Waits for the name or message the action still lacks.
+    Input(Action),
+    Confirm(Action),
 }
 
 /// Where keyboard input goes.
@@ -164,6 +199,11 @@ pub struct App {
     pub(crate) menu: Option<Menu>,
     /// A modal dialog; while open it takes all input.
     pub(crate) dialog: Option<DialogState>,
+    pending: Option<Pending>,
+    jobs: JobRunner,
+    /// The running git action's result channel.
+    job: Option<Receiver<Result<String, GitError>>>,
+    copier: fn(&str) -> io::Result<CopyVia>,
     quit: bool,
 }
 
@@ -195,6 +235,10 @@ impl App {
             refresh_error: None,
             menu: None,
             dialog: None,
+            pending: None,
+            jobs: JobRunner::new(),
+            job: None,
+            copier: clipboard::copy,
             quit: false,
         };
         app.reload()?;
@@ -206,9 +250,15 @@ impl App {
         if let Some(state) = &mut self.dialog {
             if cmd == Command::Quit {
                 self.quit = true;
-            } else if state.handle(cmd).is_some() {
-                // The outcome is acted on once dialogs are tied to git actions.
+            } else if let Some(outcome) = state.handle(cmd) {
                 self.dialog = None;
+                match (outcome, self.pending.take()) {
+                    (DialogOutcome::Accepted(value), Some(Pending::Input(a))) => {
+                        self.begin(with_value(a, value.unwrap_or_default()))
+                    }
+                    (DialogOutcome::Accepted(_), Some(Pending::Confirm(a))) => self.start_action(a),
+                    _ => {}
+                }
             }
             return Ok(());
         }
@@ -326,17 +376,12 @@ impl App {
                     }
                 }
             }
-            // Menu items are filled in once git actions exist; until then menus are empty.
-            Command::OpenMenu => {
-                if self.row(self.selected).is_some() {
-                    self.menu = Some(Menu::new(Vec::new(), None, Hit::Row(self.selected)));
-                }
-            }
+            Command::OpenMenu => self.open_menu(Hit::Row(self.selected), None),
             Command::OpenMenuAt { pos, hit } => {
                 if let Hit::Row(row) | Hit::Label { row, .. } = hit {
                     if row < self.row_count() {
                         self.select_row(row);
-                        self.menu = Some(Menu::new(Vec::new(), Some(pos), hit));
+                        self.open_menu(hit, Some(pos));
                     }
                 }
             }
@@ -351,9 +396,13 @@ impl App {
                 }
             }
             Command::MenuSelect => {
-                // Running the chosen item comes with the git actions.
-                if self.menu.as_ref().is_some_and(|m| m.chosen().is_some()) {
+                let chosen = self.menu.as_ref().and_then(Menu::chosen);
+                if let Some(id) = chosen.map(|item| item.id.clone()) {
                     self.menu = None;
+                    match id {
+                        MenuId::Do(a) => self.begin(a),
+                        MenuId::Copy(text) => self.copy(text),
+                    }
                 }
             }
             Command::MenuPick(i) => {
@@ -365,16 +414,33 @@ impl App {
                 }
             }
             Command::MenuClose => self.menu = None,
+            Command::ActivateLabel { row, index } => {
+                self.select_row(row);
+                match self.menu_target(Hit::Label { row, index }) {
+                    Some(Target::LocalBranch(name)) => self.begin(Action::CheckoutBranch(name)),
+                    Some(Target::RemoteBranch { remote, name }) => {
+                        self.begin(Action::CheckoutRemote {
+                            remote,
+                            branch: name,
+                            local_name: String::new(),
+                        })
+                    }
+                    _ => return self.apply(Command::Activate),
+                }
+            }
+            Command::Fetch => self.begin(Action::Fetch),
+            Command::Help => self.open_dialog(Dialog::Info {
+                title: "Keys".to_string(),
+                body: HELP.to_string(),
+            }),
             // Dialog input is handled above while one is open; resolve() replaced
-            // Activate/Back; Fetch and Help are not connected yet.
+            // Activate/Back.
             Command::DialogAccept
             | Command::DialogCancel
             | Command::DialogChar(_)
             | Command::DialogBackspace
             | Command::Activate
-            | Command::Back
-            | Command::Fetch
-            | Command::Help => {}
+            | Command::Back => {}
         }
         self.follow_selection();
         Ok(())
@@ -448,10 +514,61 @@ impl App {
         }
     }
 
-    /// Shows a modal dialog, closing any open menu.
+    /// Shows a modal dialog, closing any open menu and dropping any action that was
+    /// waiting on the previous dialog.
     pub fn open_dialog(&mut self, dialog: Dialog) {
         self.menu = None;
+        self.pending = None;
         self.dialog = Some(DialogState::new(dialog));
+    }
+
+    /// Runs `a` on the job thread right away, without asking. Only one action runs at
+    /// a time; starting another meanwhile shows an error.
+    pub fn start_action(&mut self, a: Action) {
+        if self.job.is_some() {
+            self.open_dialog(Dialog::Error {
+                title: "Busy".to_string(),
+                message: "Another git action is still running.".to_string(),
+            });
+            return;
+        }
+        self.job = Some(self.jobs.spawn(self.git.clone(), a));
+    }
+
+    pub fn job_running(&self) -> bool {
+        self.job.is_some()
+    }
+
+    /// Takes the running action's result if it has arrived: success reloads the view,
+    /// failure shows git's message. Returns whether the action finished.
+    pub fn poll_job(&mut self) -> bool {
+        let Some(rx) = &self.job else {
+            return false;
+        };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return false,
+            Err(TryRecvError::Disconnected) => Err(GitError::Parse(
+                "the git action stopped without a result".to_string(),
+            )),
+        };
+        self.job = None;
+        match result {
+            Ok(_) => {
+                self.refresh_error = self.reload().err().map(|e| e.message());
+                self.follow_selection();
+            }
+            Err(e) => self.open_dialog(Dialog::Error {
+                title: "Git error".to_string(),
+                message: action_error_message(&e),
+            }),
+        }
+        true
+    }
+
+    /// Replaces the clipboard writer (tests use one that cannot touch the real clipboard).
+    pub fn set_copier(&mut self, copier: fn(&str) -> io::Result<CopyVia>) {
+        self.copier = copier;
     }
 
     pub fn dialog(&self) -> Option<&DialogState> {
@@ -487,6 +604,94 @@ impl App {
 
     pub fn should_quit(&self) -> bool {
         self.quit
+    }
+
+    /// Asks for a missing value, then confirmation when the action needs it, then runs it.
+    fn begin(&mut self, a: Action) {
+        if let Some(dialog) = input_dialog(&a) {
+            self.open_dialog(dialog);
+            self.pending = Some(Pending::Input(a));
+        } else if needs_confirm(&a) {
+            self.open_dialog(confirm_dialog(&a));
+            self.pending = Some(Pending::Confirm(a));
+        } else {
+            self.start_action(a);
+        }
+    }
+
+    /// Copies `text`; when no clipboard works, shows it so it can be copied by hand.
+    fn copy(&mut self, text: String) {
+        if (self.copier)(&text).is_err() {
+            self.open_dialog(Dialog::Error {
+                title: "Copy failed".to_string(),
+                message: format!("Could not reach the clipboard. The value is:\n{text}"),
+            });
+        }
+    }
+
+    /// Opens the context menu for a row or ref label, if it points at one.
+    fn open_menu(&mut self, hit: Hit, anchor: Option<(u16, u16)>) {
+        if let Some(target) = self.menu_target(hit) {
+            let items = menu_for(&target, &self.menu_ctx(&target));
+            self.menu = Some(Menu::new(items, anchor, hit));
+        }
+    }
+
+    fn menu_target(&self, hit: Hit) -> Option<Target> {
+        match hit {
+            Hit::Row(row) => Some(match self.row(row)? {
+                Row::Uncommitted => Target::Uncommitted,
+                Row::Commit(i) => Target::Commit(self.commits[i].hash.clone()),
+            }),
+            Hit::Label { row, index } => {
+                let Row::Commit(i) = self.row(row)? else {
+                    return None;
+                };
+                let label = *self.refs.labels_for(&self.commits[i].hash).get(index)?;
+                Some(match label.kind {
+                    RefKind::LocalBranch => Target::LocalBranch(label.name.clone()),
+                    RefKind::RemoteBranch => {
+                        let (remote, name) = label.name.split_once('/')?;
+                        Target::RemoteBranch {
+                            remote: remote.to_string(),
+                            name: name.to_string(),
+                        }
+                    }
+                    RefKind::Tag => Target::Tag(label.name.clone()),
+                })
+            }
+            Hit::File(_) | Hit::Toolbar(_) => None,
+        }
+    }
+
+    fn menu_ctx(&self, target: &Target) -> MenuCtx {
+        let subject = match target {
+            Target::Commit(hash) => self
+                .commits
+                .iter()
+                .find(|c| &c.hash == hash)
+                .map(|c| c.subject.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        // Without the list, push items are simply disabled.
+        let remotes = self
+            .git
+            .run(&["remote"])
+            .map(|out| {
+                out.lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        MenuCtx {
+            head: self.refs.head.clone(),
+            has_staged: self.status.staged > 0,
+            remotes,
+            subject,
+        }
     }
 
     /// Selects row `i` and gives the table the focus.
@@ -668,5 +873,20 @@ impl App {
             self.graph.push(self.lanes.push(&c));
             self.commits.push(c);
         }
+    }
+}
+
+/// What a failed action shows: git's own message, or why the action refused to run.
+fn action_error_message(e: &GitError) -> String {
+    match e {
+        // Raised by the action itself (e.g. no remote to push to), not by unreadable git output.
+        GitError::Parse(reason) => {
+            let mut chars = reason.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        }
+        e => e.message(),
     }
 }

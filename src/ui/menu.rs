@@ -7,13 +7,17 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear};
 use ratatui::Frame;
 
+use crate::actions::Action;
 use crate::input::Hit;
 use crate::ui::layout::{display_width, fit_to_width};
 
-/// What a menu item does. Placeholder until the git actions are connected.
+/// What a menu item does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuId {
-    Noop,
+    /// Runs a git action (asking for input or confirmation first when it needs it).
+    Do(Action),
+    /// Copies the text to the clipboard.
+    Copy(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

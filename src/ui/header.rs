@@ -62,6 +62,11 @@ fn left_spans(app: &App, width: usize) -> (Vec<Span<'static>>, usize) {
         Style::new().add_modifier(Modifier::BOLD),
     )];
 
+    if app.job_running() {
+        let text = truncate_to_width("  Running…", width.saturating_sub(used));
+        used += display_width(&text);
+        spans.push(Span::styled(text, Style::new().fg(Color::Yellow)));
+    }
     if let Some(err) = &app.refresh_error {
         // First line only, kept short so the header stays one line.
         let first = err.lines().next().unwrap_or_default();
