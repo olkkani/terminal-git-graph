@@ -955,6 +955,9 @@ impl App {
     /// Everything is read before the view changes, so a failure leaves it as it was.
     fn reload(&mut self) -> Result<(), GitError> {
         let keep = self.selected_hash().map(str::to_string);
+        let old_selected = self.selected;
+        // Reload as many pages as were loaded, so a selection deep in the list survives.
+        let limit = self.commits.len().max(PAGE_SIZE).div_ceil(PAGE_SIZE) * PAGE_SIZE;
         let refs = load_refs(&self.git)?;
         let status = if self.bare {
             WorkStatus::default()
@@ -968,7 +971,7 @@ impl App {
                 scope: self.scope,
                 remotes: self.remotes,
                 skip: 0,
-                limit: PAGE_SIZE,
+                limit,
             },
         )?;
         self.refs = refs;
@@ -977,10 +980,14 @@ impl App {
         self.commits.clear();
         self.graph.clear();
         self.lanes = LaneBuilder::new();
-        self.append_page(page);
+        self.append_page(page, limit);
         self.selected = keep
             .and_then(|h| self.commits.iter().position(|c| c.hash == h))
             .map_or(0, |i| i + usize::from(self.has_uncommitted()));
+        // Keep the selected row at the same screen line; drawing clamps the rest.
+        let offset = self.offset.get();
+        self.offset
+            .set((offset + self.selected).saturating_sub(old_selected));
         self.invalidate_uncommitted_detail();
         self.menu = None;
         self.label_focus = None;
@@ -1011,12 +1018,13 @@ impl App {
                 limit: PAGE_SIZE,
             },
         )?;
-        self.append_page(page);
+        self.append_page(page, PAGE_SIZE);
         Ok(())
     }
 
-    fn append_page(&mut self, page: Vec<Commit>) {
-        self.exhausted = page.len() < PAGE_SIZE || self.commits.len() + page.len() >= self.total;
+    /// Appends commits read with `limit`; fewer than `limit` means the log ended.
+    fn append_page(&mut self, page: Vec<Commit>, limit: usize) {
+        self.exhausted = page.len() < limit || self.commits.len() + page.len() >= self.total;
         for c in page {
             self.graph.push(self.lanes.push(&c));
             self.commits.push(c);

@@ -410,3 +410,22 @@ fn focused_label_is_highlighted() {
     app.apply(Command::ClearLabelFocus).unwrap();
     assert!(!reversed(&app));
 }
+
+#[test]
+fn reload_keeps_selection_and_scroll_below_first_page() {
+    let repo = TestRepo::new();
+    fast_import_linear(&repo, 650);
+    let mut app = app_for(&repo);
+    app.apply(Command::Bottom).unwrap(); // loads page 2
+    for _ in 0..50 {
+        app.apply(Command::Up).unwrap();
+    }
+    let before = app.selected_hash().map(str::to_string);
+    let shown = screen(&app, 60, 10);
+    assert!(shown.contains("commit 101"), "{shown}");
+
+    repo.git(&["branch", "other"]);
+    app.on_watch(terminal_git_graph::watch::WatchEvent::RefsChanged);
+    assert_eq!(app.selected_hash().map(str::to_string), before);
+    assert_eq!(screen(&app, 60, 10), shown);
+}
