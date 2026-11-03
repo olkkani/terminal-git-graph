@@ -489,8 +489,20 @@ fn should_refresh_after_15_seconds_only() {
     let mut m = manygit(root.path(), vec![entry(root.path(), "g", "r", &repo)]);
     let now = Instant::now();
     assert!(!m.tick(now));
+    assert!(!m.refreshing());
     fs::write(repo.path().join("new.txt"), "x").unwrap();
-    assert!(m.tick(now + Duration::from_secs(MANYGIT_REFRESH_SECS)));
+    // The refresh runs on a thread: the tick returns at once and the list is unchanged.
+    let due = now + Duration::from_secs(MANYGIT_REFRESH_SECS);
+    assert!(!m.tick(due));
+    assert!(m.refreshing());
+    assert!(!render(&m, 60, 6).join("\n").contains('*'));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !m.tick(due) {
+        assert!(m.refreshing(), "a running refresh is not restarted");
+        assert!(Instant::now() < deadline, "refresh did not finish");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!m.refreshing());
     assert!(render(&m, 60, 6).join("\n").contains('*'));
 }
 

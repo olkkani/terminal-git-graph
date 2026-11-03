@@ -169,6 +169,8 @@ pub struct Manygit {
     /// List height at the last draw, used as the PageUp/PageDown step.
     page_height: Cell<usize>,
     last_refresh: Instant,
+    /// A background status refresh still running; its result replaces `statuses`.
+    refreshing: Option<Receiver<Vec<RepoStatus>>>,
     menu: Option<Menu>,
     dialog: Option<DialogState>,
     pending: Option<Pending>,
@@ -203,6 +205,7 @@ impl Manygit {
             offset: Cell::new(0),
             page_height: Cell::new(1),
             last_refresh: Instant::now(),
+            refreshing: None,
             menu: None,
             dialog: None,
             pending: None,
@@ -353,14 +356,45 @@ impl Manygit {
         self.opener = opener;
     }
 
-    /// Re-reads every repository's state when the list is shown and the refresh
-    /// interval has passed. Returns whether it did.
+    /// While the list is shown: takes a finished background refresh, or starts one on a
+    /// thread once the refresh interval has passed. A tick is skipped while a refresh is
+    /// still running. Returns whether new statuses arrived.
     pub fn tick(&mut self, now: Instant) -> bool {
-        if self.open.is_some() || !should_refresh(self.last_refresh, now) {
+        if self.open.is_some() {
             return false;
         }
-        self.refresh(now);
-        true
+        if let Some(rx) = &self.refreshing {
+            return match rx.try_recv() {
+                Ok(statuses) => {
+                    self.statuses = statuses;
+                    self.refreshing = None;
+                    true
+                }
+                Err(TryRecvError::Empty) => false,
+                Err(TryRecvError::Disconnected) => {
+                    self.refreshing = None;
+                    false
+                }
+            };
+        }
+        if should_refresh(self.last_refresh, now) {
+            let paths: Vec<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
+            let show_tags = self.show_tags;
+            let (tx, rx) = mpsc::channel();
+            thread::spawn(move || {
+                let statuses = paths.iter().map(|p| repo_status(p, show_tags)).collect();
+                // The receiver is gone if a newer refresh replaced it.
+                let _ = tx.send(statuses);
+            });
+            self.refreshing = Some(rx);
+            self.last_refresh = now;
+        }
+        false
+    }
+
+    /// Whether a background status refresh is running.
+    pub fn refreshing(&self) -> bool {
+        self.refreshing.is_some()
     }
 
     /// Takes finished work: a list action's result (refreshing the list, or showing
@@ -677,6 +711,8 @@ impl Manygit {
     }
 
     fn refresh(&mut self, now: Instant) {
+        // A background refresh started earlier would bring older data.
+        self.refreshing = None;
         self.statuses = self
             .entries
             .iter()
