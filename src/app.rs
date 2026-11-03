@@ -590,6 +590,11 @@ impl App {
     pub fn resolve(&self, cmd: Command) -> Command {
         match cmd {
             Command::Back if self.focused_label().is_some() => Command::ClearLabelFocus,
+            // Enter on a focused local branch checks it out, like a double click.
+            Command::Activate if self.focused_local_branch().is_some() => Command::ActivateLabel {
+                row: self.selected,
+                index: self.focused_label().unwrap_or_default(),
+            },
             Command::Activate if self.detail_open() => Command::FocusFiles,
             Command::Activate => Command::OpenDetail,
             Command::Back if self.detail_open() => Command::CloseDetail,
@@ -810,6 +815,20 @@ impl App {
         self.label_focus
             .filter(|&(row, _)| row == self.selected)
             .map(|(_, index)| index)
+    }
+
+    /// The focused label's index when it is a local branch.
+    fn focused_local_branch(&self) -> Option<usize> {
+        let index = self.focused_label()?;
+        let Row::Commit(i) = self.row(self.selected)? else {
+            return None;
+        };
+        let label = self
+            .refs
+            .labels_for(&self.commits[i].hash)
+            .get(index)
+            .copied()?;
+        (label.kind == RefKind::LocalBranch).then_some(index)
     }
 
     /// Indices (into `Refs::labels_for`) of the labels drawn on `row`.

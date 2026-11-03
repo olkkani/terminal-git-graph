@@ -747,3 +747,25 @@ fn detached_head_badge_opens_commit_menu() {
     let want: Vec<&str> = commit_menu.iter().map(|i| i.label.as_str()).collect();
     assert_eq!(labels, want);
 }
+
+#[test]
+fn enter_on_focused_local_label_checks_it_out() {
+    use terminal_git_graph::terminal::key_command;
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.branch("feature");
+    repo.commit("second");
+    let mut app = app_for(&repo);
+    let Hit::Label { row, .. } = label_hit(&mut app, &repo, "feature") else {
+        unreachable!()
+    };
+    app.apply(Command::SelectRow(row)).unwrap();
+    app.apply(Command::LabelNext).unwrap();
+    let cmd = key_command(KeyEvent::from(KeyCode::Enter), &app).expect("command");
+    assert!(matches!(cmd, Command::ActivateLabel { .. }), "{cmd:?}");
+    app.apply(cmd).unwrap();
+    assert!(app.dialog().is_none());
+    wait_job(&mut app);
+    assert_eq!(current_branch(&repo), "feature");
+    assert!(!app.detail_open());
+}
