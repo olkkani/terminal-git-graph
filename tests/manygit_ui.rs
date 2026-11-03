@@ -529,3 +529,18 @@ fn visited_repo_graph_is_cached_for_instant_reopen() {
     let screen = render(&m, 60, 10).join("\n");
     assert!(screen.contains("newer subject"), "{screen}");
 }
+
+#[test]
+fn too_small_list_hides_menu_and_ignores_its_keys() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.commit("base");
+    let mut m = manygit(root.path(), vec![entry(root.path(), "g", "r", &repo)]);
+    press(&mut m, KeyCode::Char('m'));
+    assert!(m.menu().is_some());
+    assert!(render(&m, 19, 3).join("\n").contains("Terminal too small"));
+    assert_eq!(m.key_command(KeyEvent::from(KeyCode::Enter)), None);
+    assert_eq!(m.key_command(KeyEvent::from(KeyCode::Down)), None);
+    render(&m, 60, 6);
+    assert!(m.key_command(KeyEvent::from(KeyCode::Enter)).is_some());
+}

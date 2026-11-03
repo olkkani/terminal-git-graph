@@ -182,17 +182,17 @@ fn tiny_terminal_shows_too_small_message_without_panic() {
     let repo = TestRepo::new();
     repo.commit("hello");
     let app = app_for(&repo);
-    let out = screen(&app, 10, 3);
-    assert!(out.contains("Too small"), "{out}");
+    let out = screen(&app, 19, 3);
+    assert!(out.contains("Terminal too small"), "{out}");
 
     let mut term = Terminal::new(TestBackend::new(20, 6)).unwrap();
     term.draw(|f| app.draw(f)).unwrap();
     assert!(lines(term.backend().buffer()).join("\n").contains("hello"));
-    term.backend_mut().resize(10, 6);
+    term.backend_mut().resize(19, 6);
     term.draw(|f| app.draw(f)).unwrap();
     assert!(lines(term.backend().buffer())
         .join("\n")
-        .contains("Too small"));
+        .contains("Terminal too small"));
 }
 
 #[test]
@@ -265,12 +265,20 @@ fn scope_and_remotes_toggles_reload() {
 #[test]
 fn uncommitted_row_is_first_with_count() {
     let repo = TestRepo::new();
+    repo.commit("one");
+    repo.commit("two");
     let head = repo.commit("base");
-    std::fs::write(repo.path().join("file-1.txt"), "changed\n").unwrap();
+    for n in 1..=3 {
+        std::fs::write(repo.path().join(format!("file-{n}.txt")), "changed\n").unwrap();
+    }
     std::fs::write(repo.path().join("new.txt"), "new\n").unwrap();
+    std::fs::write(repo.path().join("new2.txt"), "new\n").unwrap();
     let mut app = app_for(&repo);
-    let rows = render(&app, 60, 6);
-    assert!(rows[1].contains("Uncommitted changes (2)"), "{rows:?}");
+    let rows = render(&app, 100, 6);
+    assert!(
+        rows[1].contains("Uncommitted changes (5: 3 tracked, 2 untracked)"),
+        "{rows:?}"
+    );
     assert!(rows[2].contains("base"), "{rows:?}");
     assert_eq!(app.selected_hash(), None);
     app.apply(Command::Down).unwrap();
@@ -504,4 +512,28 @@ fn emoji_subjects_keep_columns_aligned() {
         "{author_x:?}\n{:#?}",
         lines(&buf)
     );
+}
+
+#[test]
+fn hidden_dialog_ignores_input_while_too_small() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use terminal_git_graph::terminal::key_command;
+    let repo = TestRepo::new();
+    repo.commit("hello");
+    let mut app = app_for(&repo);
+    app.open_dialog(terminal_git_graph::ui::dialog::Dialog::Info {
+        title: "t".to_string(),
+        body: "b".to_string(),
+    });
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    screen(&app, 19, 3);
+    assert!(app.too_small());
+    assert_eq!(key_command(enter, &app), None);
+    assert_eq!(
+        key_command(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE), &app),
+        Some(Command::Quit)
+    );
+    // Back at a usable size the dialog gets its keys again.
+    screen(&app, 60, 10);
+    assert_eq!(key_command(enter, &app), Some(Command::DialogAccept));
 }

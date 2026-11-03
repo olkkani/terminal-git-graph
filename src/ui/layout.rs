@@ -10,6 +10,8 @@ pub const HASH_MIN_WIDTH: u16 = 100;
 /// Below this size the UI shows only a "too small" message.
 pub const MIN_WIDTH: u16 = 20;
 pub const MIN_HEIGHT: u16 = 3;
+/// Shown instead of the UI below `MIN_WIDTH`×`MIN_HEIGHT`.
+pub const TOO_SMALL: &str = "Terminal too small";
 /// From this height the detail sits below the table; shorter terminals show it full screen.
 pub const DETAIL_SPLIT_MIN_HEIGHT: u16 = 30;
 

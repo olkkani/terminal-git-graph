@@ -272,5 +272,8 @@ fn event_loop(term: &mut Tui, screen: &mut impl Screen) -> Result<(), Box<dyn Er
 
 /// Maps a key press to the command it means for the app's current input mode.
 pub fn key_command(key: KeyEvent, app: &App) -> Option<Command> {
+    if app.too_small() {
+        return input::too_small_key(key);
+    }
     translate_key(key, app.input_mode()).map(|cmd| app.resolve(cmd))
 }

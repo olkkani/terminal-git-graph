@@ -26,7 +26,9 @@ use crate::input::{self, menu_mouse, translate_key, ClickKind, ClickTracker, Hit
 use crate::menus::{confirm_dialog, input_dialog, with_value};
 use crate::remote_url::{open_in_browser, to_https};
 use crate::ui::dialog::{Dialog, DialogOutcome, DialogState};
-use crate::ui::layout::{display_width, fit_to_width, truncate_to_width, MIN_HEIGHT, MIN_WIDTH};
+use crate::ui::layout::{
+    display_width, fit_to_width, truncate_to_width, MIN_HEIGHT, MIN_WIDTH, TOO_SMALL,
+};
 use crate::ui::menu::{Menu, MenuId, MenuItem};
 use crate::ui::theme::{muted, selected_bg, ColorDepth};
 use crate::watch::WatchEvent;
@@ -168,6 +170,8 @@ pub struct Manygit {
     offset: Cell<usize>,
     /// List height at the last draw, used as the PageUp/PageDown step.
     page_height: Cell<usize>,
+    /// The last list draw showed only the "too small" message.
+    too_small: Cell<bool>,
     last_refresh: Instant,
     /// A background status refresh still running; its result replaces `statuses`.
     refreshing: Option<Receiver<Vec<RepoStatus>>>,
@@ -204,6 +208,7 @@ impl Manygit {
             selected: 0,
             offset: Cell::new(0),
             page_height: Cell::new(1),
+            too_small: Cell::new(false),
             last_refresh: Instant::now(),
             refreshing: None,
             menu: None,
@@ -267,6 +272,9 @@ impl Manygit {
 
     /// Maps a key press to the command it means now.
     pub fn key_command(&self, key: KeyEvent) -> Option<Command> {
+        if self.too_small() {
+            return input::too_small_key(key);
+        }
         let cmd = translate_key(key, self.input_mode())?;
         Some(match self.graph() {
             Some(app) => app.resolve(cmd),
@@ -284,6 +292,9 @@ impl Manygit {
     ) -> Option<Command> {
         if let Some(app) = self.graph() {
             return input::mouse_command(app, area, ev, clicks, now);
+        }
+        if self.too_small.get() {
+            return None;
         }
         let pos = (ev.column, ev.row);
         match self.input_mode() {
@@ -310,6 +321,11 @@ impl Manygit {
             },
             _ => None,
         }
+    }
+
+    /// Whether the shown screen was last drawn too small; input is then ignored but quit.
+    pub fn too_small(&self) -> bool {
+        self.graph().map_or(self.too_small.get(), App::too_small)
     }
 
     pub fn menu(&self) -> Option<&Menu> {
@@ -460,8 +476,10 @@ impl Manygit {
             return;
         }
         let area = frame.area();
-        if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-            let msg = truncate_to_width("Too small", area.width as usize);
+        self.too_small
+            .set(area.width < MIN_WIDTH || area.height < MIN_HEIGHT);
+        if self.too_small.get() {
+            let msg = truncate_to_width(TOO_SMALL, area.width as usize);
             frame.render_widget(Line::raw(msg), area);
             return;
         }

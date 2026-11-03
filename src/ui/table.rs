@@ -105,7 +105,12 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
                 }
             }
             _ => {
-                let text = format!("Uncommitted changes ({})", app.status.changed_total());
+                let total = app.status.changed_total();
+                let untracked = app.status.untracked;
+                let text = format!(
+                    "Uncommitted changes ({total}: {} tracked, {untracked} untracked)",
+                    total - untracked
+                );
                 spans.push(Span::styled(
                     fit_to_width(&text, desc_w),
                     Style::new().add_modifier(Modifier::ITALIC),

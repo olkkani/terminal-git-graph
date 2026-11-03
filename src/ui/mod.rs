@@ -12,7 +12,7 @@ use ratatui::text::Line;
 use ratatui::Frame;
 
 use crate::app::App;
-use layout::{truncate_to_width, DETAIL_SPLIT_MIN_HEIGHT, MIN_HEIGHT, MIN_WIDTH};
+use layout::{truncate_to_width, DETAIL_SPLIT_MIN_HEIGHT, MIN_HEIGHT, MIN_WIDTH, TOO_SMALL};
 
 /// Where each part of the screen goes.
 pub(crate) struct Areas {
@@ -47,8 +47,10 @@ pub(crate) fn areas(app: &App, area: Rect) -> Option<Areas> {
 
 pub(crate) fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
-    let Some(areas) = areas(app, area) else {
-        let msg = truncate_to_width("Too small", area.width as usize);
+    let areas = areas(app, area);
+    app.too_small.set(areas.is_none());
+    let Some(areas) = areas else {
+        let msg = truncate_to_width(TOO_SMALL, area.width as usize);
         frame.render_widget(Line::raw(msg), area);
         return;
     };

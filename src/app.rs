@@ -224,6 +224,8 @@ pub struct App {
     pub(crate) offset: Cell<usize>,
     /// Table height at the last draw, used as the PageUp/PageDown step.
     pub(crate) page_height: Cell<usize>,
+    /// The last draw showed only the "too small" message; dialogs and menus were hidden.
+    pub(crate) too_small: Cell<bool>,
     pub(crate) detail: Option<DetailView>,
     cache: DetailCache,
     /// Diff body height at the last draw, bounding the diff scroll.
@@ -270,6 +272,7 @@ impl App {
             selected: 0,
             offset: Cell::new(0),
             page_height: Cell::new(1),
+            too_small: Cell::new(false),
             detail: None,
             cache: DetailCache::new(),
             diff_height: Cell::new(1),
@@ -691,6 +694,12 @@ impl App {
 
     pub fn detail_open(&self) -> bool {
         self.detail.is_some()
+    }
+
+    /// Whether the last draw was too small to show anything but a message. Input is
+    /// then ignored, except quitting, so a hidden dialog cannot be answered blindly.
+    pub fn too_small(&self) -> bool {
+        self.too_small.get()
     }
 
     pub fn draw(&self, frame: &mut ratatui::Frame) {

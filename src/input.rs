@@ -89,6 +89,13 @@ pub enum ToolbarButton {
 }
 
 /// Maps a key press to a command in `mode`.
+/// The only keys that work while the screen is too small to draw: Ctrl-C and q quit.
+pub fn too_small_key(key: KeyEvent) -> Option<Command> {
+    let ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+    let q = key.modifiers.is_empty() && key.code == KeyCode::Char('q');
+    (ctrl_c || q).then_some(Command::Quit)
+}
+
 pub fn translate_key(key: KeyEvent, mode: InputMode) -> Option<Command> {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return (key.code == KeyCode::Char('c')).then_some(Command::Quit);
@@ -185,6 +192,9 @@ pub fn mouse_command(
     clicks: &mut ClickTracker,
     now: Instant,
 ) -> Option<Command> {
+    if app.too_small() {
+        return None;
+    }
     let pos = (ev.column, ev.row);
     match app.input_mode() {
         InputMode::Dialog | InputMode::List => None,
