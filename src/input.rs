@@ -122,6 +122,8 @@ pub fn translate_key(key: KeyEvent, mode: InputMode) -> Option<Command> {
             _ => Command::Activate,
         },
         KeyCode::Tab => Command::FocusFiles,
+        KeyCode::Left | KeyCode::Char('h') if mode == InputMode::Graph => Command::LabelPrev,
+        KeyCode::Right | KeyCode::Char('l') if mode == InputMode::Graph => Command::LabelNext,
         KeyCode::Up | KeyCode::Char('k') => {
             by_mode([Command::Up, Command::FileUp, Command::DiffScrollUp])
         }

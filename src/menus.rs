@@ -91,7 +91,7 @@ pub fn menu_for(t: &Target, ctx: &MenuCtx) -> Vec<MenuItem> {
                     act(Action::MergeInto(name.clone())),
                 ),
                 item(
-                    "Rebase onto current",
+                    "Rebase current onto this",
                     other,
                     act(Action::RebaseOnto(name.clone())),
                 ),
@@ -214,6 +214,7 @@ pub fn input_dialog(a: &Action) -> Option<Dialog> {
             title: title.to_string(),
             prompt,
             value: value.to_string(),
+            name: true,
         })
     };
     match a {
@@ -235,9 +236,12 @@ pub fn input_dialog(a: &Action) -> Option<Dialog> {
         Action::CreateBranch { name, .. } if name.is_empty() => {
             input("Create branch", "Branch name:".to_string(), "")
         }
-        Action::Commit { message, .. } if message.is_empty() => {
-            input("Commit", "Commit message:".to_string(), "")
-        }
+        Action::Commit { message, .. } if message.is_empty() => Some(Dialog::Input {
+            title: "Commit".to_string(),
+            prompt: "Commit message:".to_string(),
+            value: String::new(),
+            name: false,
+        }),
         _ => None,
     }
 }

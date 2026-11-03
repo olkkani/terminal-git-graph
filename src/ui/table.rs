@@ -74,7 +74,8 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
                     bg = Some(theme::head_bg(app.depth));
                 }
                 let labels = app.refs.labels_for(&commit.hash);
-                let (badges, used, _) = badge_spans(app, &labels, g.color, desc_w / 2);
+                let focus = (i == app.selected).then(|| app.focused_label()).flatten();
+                let (badges, used, _) = badge_spans(app, &labels, g.color, desc_w / 2, focus);
                 spans.extend(badges);
                 let subject_style = if g.is_merge {
                     Style::new().add_modifier(Modifier::DIM)
@@ -191,7 +192,7 @@ pub(crate) fn hit(app: &App, area: Rect, pos: (u16, u16)) -> Option<Hit> {
     }
     if let Some(Row::Commit(c)) = app.row(i) {
         let labels = app.refs.labels_for(&app.commits[c].hash);
-        let (_, _, places) = badge_spans(app, &labels, app.graph[c].color, layout.desc_w / 2);
+        let (_, _, places) = badge_spans(app, &labels, app.graph[c].color, layout.desc_w / 2, None);
         // Badges start after the graph and one space.
         let col = (x - area.x) as usize;
         let start = layout.graph_w + 1;
@@ -260,12 +261,13 @@ fn label_text(app: &App, label: &RefLabel) -> String {
 type BadgePlaces = Vec<(usize, std::ops::Range<usize>)>;
 
 /// Badge spans within `budget` columns (cut with '…' when they don't fit), their width
-/// and where each badge sits relative to the first.
+/// and where each badge sits relative to the first. The `focus`-th label is highlighted.
 fn badge_spans(
     app: &App,
     labels: &[&RefLabel],
     color: usize,
     budget: usize,
+    focus: Option<usize>,
 ) -> (Vec<Span<'static>>, usize, BadgePlaces) {
     let lane = theme::lane_color(color, app.depth);
     let mut spans = Vec::new();
@@ -282,6 +284,11 @@ fn badge_spans(
                 .add_modifier(Modifier::BOLD),
             RefKind::RemoteBranch => Style::new().fg(lane).add_modifier(Modifier::BOLD),
             RefKind::Tag => Style::new().fg(Color::Black).bg(theme::muted(app.depth)),
+        };
+        let style = if focus == Some(index) {
+            style.add_modifier(Modifier::REVERSED | Modifier::UNDERLINED)
+        } else {
+            style
         };
         let text = label_text(app, label);
         let w = display_width(&text);

@@ -1,5 +1,7 @@
 //! Context menu: a bordered list of items opened at a click (or centred for the keyboard),
-//! moved back on screen when it would not fit.
+//! moved back on screen when it would not fit, and scrolled when taller than the screen.
+
+use std::cell::Cell;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -38,6 +40,8 @@ pub struct Menu {
     pub anchor: Option<(u16, u16)>,
     /// The row or label the menu is for.
     pub target: Hit,
+    /// First item in view; adjusted while drawing to keep the selection visible.
+    offset: Cell<usize>,
 }
 
 impl Menu {
@@ -48,6 +52,7 @@ impl Menu {
             selected,
             anchor,
             target,
+            offset: Cell::new(0),
         }
     }
 
@@ -97,6 +102,23 @@ impl Menu {
         }
     }
 
+    /// Indices of the items in view on `screen`, scrolling just enough to keep the
+    /// highlighted item visible.
+    fn visible(&self, screen: Rect) -> std::ops::Range<usize> {
+        let height = self.rect(screen).height.saturating_sub(2) as usize;
+        let count = self.items.len();
+        let mut offset = self.offset.get().min(count.saturating_sub(height));
+        if let Some(sel) = self.selected {
+            if sel < offset {
+                offset = sel;
+            } else if height > 0 && sel >= offset + height {
+                offset = sel + 1 - height;
+            }
+        }
+        self.offset.set(offset);
+        offset..(offset + height).min(count)
+    }
+
     /// Index of the item at `pos`, if the position is on one.
     pub fn item_at(&self, screen: Rect, pos: (u16, u16)) -> Option<usize> {
         let rect = self.rect(screen);
@@ -104,8 +126,9 @@ impl Menu {
         if x <= rect.x || x + 1 >= rect.right() || y <= rect.y || y + 1 >= rect.bottom() {
             return None;
         }
-        let i = (y - rect.y - 1) as usize;
-        (i < self.items.len()).then_some(i)
+        let visible = self.visible(screen);
+        let i = visible.start + (y - rect.y - 1) as usize;
+        visible.contains(&i).then_some(i)
     }
 
     pub(crate) fn draw(&self, frame: &mut Frame, screen: Rect) {
@@ -114,7 +137,20 @@ impl Menu {
         let inner = block.inner(rect);
         frame.render_widget(Clear, rect);
         frame.render_widget(block, rect);
-        for (n, item) in self.items.iter().enumerate().take(inner.height as usize) {
+        let visible = self.visible(screen);
+        // Arrows on the border show that items are hidden above or below.
+        let arrow_x = rect.right().saturating_sub(3);
+        if visible.start > 0 && rect.width > 4 {
+            frame
+                .buffer_mut()
+                .set_string(arrow_x, rect.y, "▲", Style::new());
+        }
+        if visible.end < self.items.len() && rect.width > 4 {
+            let y = rect.bottom() - 1;
+            frame.buffer_mut().set_string(arrow_x, y, "▼", Style::new());
+        }
+        for (y, n) in (inner.y..).zip(visible) {
+            let item = &self.items[n];
             let mut style = Style::new();
             if item.danger {
                 style = style.fg(Color::Red);
@@ -126,7 +162,6 @@ impl Menu {
                 style = style.add_modifier(Modifier::REVERSED);
             }
             let text = fit_to_width(&format!(" {}", item.label), inner.width as usize);
-            let y = inner.y + n as u16;
             frame
                 .buffer_mut()
                 .set_line(inner.x, y, &Line::styled(text, style), inner.width);

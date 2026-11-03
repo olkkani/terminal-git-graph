@@ -1,6 +1,11 @@
 mod support;
 
 use std::fs;
+
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
+use ratatui::Terminal;
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
@@ -9,7 +14,7 @@ use terminal_git_graph::actions::{Action, ResetMode};
 use terminal_git_graph::app::{App, Command};
 use terminal_git_graph::git::refs::{load_refs, Head};
 use terminal_git_graph::git::Git;
-use terminal_git_graph::input::Hit;
+use terminal_git_graph::input::{translate_key, Hit};
 use terminal_git_graph::jobs::JobRunner;
 use terminal_git_graph::menus::{menu_for, MenuCtx, Target};
 use terminal_git_graph::ui::dialog::Dialog;
@@ -65,7 +70,7 @@ fn menu_labels_match_spec_for_each_target() {
             "Rename",
             "Delete",
             "Merge into current",
-            "Rebase onto current",
+            "Rebase current onto this",
             "Push",
             "Copy name"
         ]
@@ -151,7 +156,7 @@ fn menu_items_carry_their_actions() {
 #[test]
 fn current_branch_delete_merge_rebase_disabled() {
     let items = menu_for(&local("main"), &on_main());
-    for label in ["Delete", "Merge into current", "Rebase onto current"] {
+    for label in ["Delete", "Merge into current", "Rebase current onto this"] {
         assert!(!item(&items, label).enabled, "{label} enabled");
     }
     for label in ["Checkout", "Rename", "Push", "Copy name"] {
@@ -165,7 +170,7 @@ fn current_branch_delete_merge_rebase_disabled() {
 fn detached_head_disables_current_branch_items() {
     let c = ctx(Head::Detached(s("abc1234def")));
     let items = menu_for(&local("feature"), &c);
-    for label in ["Merge into current", "Rebase onto current", "Push"] {
+    for label in ["Merge into current", "Rebase current onto this", "Push"] {
         assert!(!item(&items, label).enabled, "local {label} enabled");
     }
     for label in ["Checkout", "Rename", "Delete", "Copy name"] {
@@ -511,4 +516,178 @@ fn job_runner_delivers_result_without_blocking() {
         .expect("job result");
     assert!(result.is_ok(), "{result:?}");
     assert_eq!(current_branch(&repo), "feature");
+}
+
+// ---- Keyboard access, free-text input, menu scrolling ----
+
+/// Applies the command a key press maps to in the current input mode.
+fn press(app: &mut App, code: KeyCode) {
+    if let Some(cmd) = translate_key(KeyEvent::from(code), app.input_mode()) {
+        app.apply(cmd).unwrap();
+    }
+}
+
+fn menu_labels(app: &App) -> Vec<String> {
+    app.menu()
+        .expect("menu open")
+        .items
+        .iter()
+        .map(|i| i.label.clone())
+        .collect()
+}
+
+#[test]
+fn keyboard_opens_local_branch_and_tag_menus() {
+    let repo = TestRepo::new();
+    let first = repo.commit("first");
+    repo.branch("feature");
+    repo.tag("v1");
+    repo.commit("second");
+    let mut app = app_for(&repo);
+    while app.selected_hash() != Some(first.as_str()) {
+        press(&mut app, KeyCode::Down);
+    }
+
+    // Without a focused label, 'm' opens the commit menu.
+    press(&mut app, KeyCode::Char('m'));
+    assert!(menu_labels(&app).contains(&s("Copy hash")));
+    press(&mut app, KeyCode::Esc);
+
+    // Right walks the row's labels; 'm' opens the focused one's menu.
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Char('m'));
+        seen.push(menu_labels(&app));
+        press(&mut app, KeyCode::Esc);
+    }
+    let local_menu = seen.iter().any(|l| l.contains(&s("Rename")));
+    let tag_menu = seen
+        .iter()
+        .any(|l| *l == vec![s("Delete"), s("Push"), s("Copy name")]);
+    assert!(local_menu && tag_menu, "{seen:?}");
+
+    // Moving past the last label clears the focus.
+    press(&mut app, KeyCode::Right);
+    press(&mut app, KeyCode::Char('m'));
+    assert!(menu_labels(&app).contains(&s("Copy hash")));
+    press(&mut app, KeyCode::Esc);
+
+    // 'h' from no focus goes to the last label; Esc clears it without quitting.
+    press(&mut app, KeyCode::Char('h'));
+    press(&mut app, KeyCode::Esc);
+    assert!(!app.should_quit());
+    press(&mut app, KeyCode::Char('m'));
+    assert!(menu_labels(&app).contains(&s("Copy hash")));
+
+    // The local-branch menu runs its actions from the keyboard too.
+    press(&mut app, KeyCode::Esc);
+    press(&mut app, KeyCode::Char('l'));
+    press(&mut app, KeyCode::Char('m'));
+    if !menu_labels(&app).contains(&s("Rename")) {
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Char('m'));
+    }
+    press(&mut app, KeyCode::Enter); // Checkout
+    wait_job(&mut app);
+    assert_eq!(current_branch(&repo), "feature");
+}
+
+#[test]
+fn commit_message_may_start_with_dash() {
+    let repo = TestRepo::new();
+    repo.commit_file("a.txt", "one\n", "first");
+    fs::write(repo.path().join("a.txt"), "two\n").unwrap();
+    let mut app = app_for(&repo);
+    open_menu(&mut app, Hit::Row(0));
+    pick(&mut app, "Commit (stage all)");
+    for c in "-wip".chars() {
+        app.apply(Command::DialogChar(c)).unwrap();
+    }
+    app.apply(Command::DialogAccept).unwrap();
+    assert!(
+        matches!(
+            app.dialog().map(|d| &d.dialog),
+            Some(Dialog::Confirm { .. })
+        ),
+        "{:?}",
+        app.dialog()
+    );
+    app.apply(Command::DialogAccept).unwrap();
+    wait_job(&mut app);
+    assert!(app.dialog().is_none(), "{:?}", app.dialog());
+    assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "-wip");
+}
+
+#[test]
+fn branch_name_input_still_rejects_leading_dash() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    let mut app = app_for(&repo);
+    open_menu(&mut app, Hit::Row(0));
+    pick(&mut app, "Create branch");
+    for c in "-x".chars() {
+        app.apply(Command::DialogChar(c)).unwrap();
+    }
+    app.apply(Command::DialogAccept).unwrap();
+    let state = app.dialog().expect("dialog stays open");
+    assert!(matches!(state.dialog, Dialog::Input { .. }));
+    assert!(state.error.is_some());
+}
+
+fn render(app: &App, width: u16, height: u16) -> Vec<String> {
+    let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
+    term.draw(|f| app.draw(f)).unwrap();
+    let buf = term.backend().buffer();
+    (0..height)
+        .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect())
+        .collect()
+}
+
+#[test]
+fn tall_menu_scrolls_on_a_ten_row_terminal() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.commit("second");
+    let mut app = app_for(&repo);
+    let (w, h) = (40, 10);
+    render(&app, w, h);
+    press(&mut app, KeyCode::Char('m'));
+    let count = app.menu().unwrap().items.len();
+    assert!(count + 2 > h as usize, "menu fits; test needs a taller one");
+
+    let screen = render(&app, w, h).join("\n");
+    assert!(screen.contains("Add tag"), "{screen}");
+    assert!(!screen.contains("Copy subject"), "{screen}");
+    assert!(screen.contains('▼'), "more-below indicator\n{screen}");
+
+    for _ in 0..count {
+        press(&mut app, KeyCode::Down);
+    }
+    let menu = app.menu().unwrap();
+    assert_eq!(menu.chosen().unwrap().label, "Copy subject");
+    let lines = render(&app, w, h);
+    let screen = lines.join("\n");
+    assert!(screen.contains("Copy subject"), "{screen}");
+    assert!(screen.contains('▲'), "more-above indicator\n{screen}");
+
+    // A click lands on the item drawn there, not on the unscrolled index.
+    let y = lines
+        .iter()
+        .position(|l| l.contains("Copy subject"))
+        .unwrap() as u16;
+    let x = lines[y as usize].find("Copy subject").unwrap() as u16;
+    let screen_rect = Rect::new(0, 0, w, h);
+    assert_eq!(
+        app.menu().unwrap().item_at(screen_rect, (x, y)),
+        Some(count - 1)
+    );
+
+    // And it scrolls back up.
+    for _ in 0..count {
+        press(&mut app, KeyCode::Up);
+    }
+    let screen = render(&app, w, h).join("\n");
+    assert!(screen.contains("Add tag"), "{screen}");
 }

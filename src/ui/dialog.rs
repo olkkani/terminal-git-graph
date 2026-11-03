@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, Clear};
 use ratatui::Frame;
 
 use crate::app::Command;
+use crate::git::validate_name;
 use crate::ui::layout::{display_width, printable};
 
 /// Widest a dialog gets, in cells.
@@ -24,6 +25,9 @@ pub enum Dialog {
         title: String,
         prompt: String,
         value: String,
+        /// The value names a ref (branch or tag), so git's name rules apply; otherwise
+        /// it is free text such as a commit message.
+        name: bool,
     },
     Error {
         title: String,
@@ -62,7 +66,7 @@ impl DialogState {
     pub fn handle(&mut self, cmd: Command) -> Option<DialogOutcome> {
         match cmd {
             Command::DialogAccept => match &self.dialog {
-                Dialog::Input { value, .. } => match check_value(value) {
+                Dialog::Input { value, name, .. } => match check_value(value, *name) {
                     Ok(()) => Some(DialogOutcome::Accepted(Some(value.clone()))),
                     Err(e) => {
                         self.error = Some(e.to_string());
@@ -154,12 +158,14 @@ impl DialogState {
     }
 }
 
-/// Refuses values git could read as an option.
-fn check_value(value: &str) -> Result<(), &'static str> {
+/// Refuses empty values, and ref names git could read as an option or would reject.
+fn check_value(value: &str, name: bool) -> Result<(), &'static str> {
     if value.is_empty() {
         Err("A value is required.")
-    } else if value.starts_with('-') {
-        Err("The value cannot start with '-'.")
+    } else if name && value.starts_with('-') {
+        Err("The name cannot start with '-'.")
+    } else if name && validate_name(value).is_err() {
+        Err("The name cannot contain spaces or control characters.")
     } else {
         Ok(())
     }

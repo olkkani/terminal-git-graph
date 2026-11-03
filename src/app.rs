@@ -65,8 +65,15 @@ pub enum Command {
     DiffBottom,
     /// Selects a file in the detail and focuses the file list.
     SelectFile(usize),
-    /// Opens the menu for the selected row (the keyboard's right click).
+    /// Opens the menu for the focused ref label, else for the selected row (the
+    /// keyboard's right click).
     OpenMenu,
+    /// Focuses the previous ref label of the selected row; from none, the last one.
+    LabelPrev,
+    /// Focuses the next ref label of the selected row; from none, the first one.
+    LabelNext,
+    /// Esc with a focused ref label: drops the focus.
+    ClearLabelFocus,
     /// Right click: selects the row under `hit` and opens its menu at `pos`.
     OpenMenuAt {
         pos: (u16, u16),
@@ -101,7 +108,8 @@ g/G, Home/End  First/last
 Enter          Open detail / file list / diff
 Tab            Switch table and file list
 Esc            Back
-m              Menu (right click)
+h/l, Left/Rt   Focus a ref label of the row
+m              Menu of that label, else the row (right click)
 a              All branches / current branch
 r              Show/hide remotes
 f              Fetch
@@ -197,6 +205,9 @@ pub struct App {
     /// Why the last filesystem-triggered refresh failed; cleared by the next success.
     pub(crate) refresh_error: Option<String>,
     pub(crate) menu: Option<Menu>,
+    /// Keyboard-focused ref label as (row, index into `Refs::labels_for`); it only
+    /// counts while that row is selected.
+    label_focus: Option<(usize, usize)>,
     /// A modal dialog; while open it takes all input.
     pub(crate) dialog: Option<DialogState>,
     pending: Option<Pending>,
@@ -234,6 +245,7 @@ impl App {
             diff_height: Cell::new(1),
             refresh_error: None,
             menu: None,
+            label_focus: None,
             dialog: None,
             pending: None,
             jobs: JobRunner::new(),
@@ -376,7 +388,30 @@ impl App {
                     }
                 }
             }
-            Command::OpenMenu => self.open_menu(Hit::Row(self.selected), None),
+            Command::OpenMenu => {
+                let hit = match self.focused_label() {
+                    Some(index) => Hit::Label {
+                        row: self.selected,
+                        index,
+                    },
+                    None => Hit::Row(self.selected),
+                };
+                self.open_menu(hit, None);
+            }
+            Command::LabelPrev | Command::LabelNext => {
+                let shown = self.shown_labels(self.selected);
+                let pos = self
+                    .focused_label()
+                    .and_then(|i| shown.iter().position(|&s| s == i));
+                let next = match (cmd, pos) {
+                    (Command::LabelNext, None) => shown.first().copied(),
+                    (Command::LabelNext, Some(p)) => shown.get(p + 1).copied(),
+                    (_, None) => shown.last().copied(),
+                    (_, Some(p)) => p.checked_sub(1).map(|p| shown[p]),
+                };
+                self.label_focus = next.map(|i| (self.selected, i));
+            }
+            Command::ClearLabelFocus => self.label_focus = None,
             Command::OpenMenuAt { pos, hit } => {
                 if let Hit::Row(row) | Hit::Label { row, .. } = hit {
                     if row < self.row_count() {
@@ -491,6 +526,7 @@ impl App {
     /// Turns the context-dependent `Activate`/`Back` into the command they mean now.
     pub fn resolve(&self, cmd: Command) -> Command {
         match cmd {
+            Command::Back if self.focused_label().is_some() => Command::ClearLabelFocus,
             Command::Activate if self.detail_open() => Command::FocusFiles,
             Command::Activate => Command::OpenDetail,
             Command::Back if self.detail_open() => Command::CloseDetail,
@@ -635,6 +671,27 @@ impl App {
             let items = menu_for(&target, &self.menu_ctx(&target));
             self.menu = Some(Menu::new(items, anchor, hit));
         }
+    }
+
+    /// The focused ref label's index, if it belongs to the selected row.
+    pub(crate) fn focused_label(&self) -> Option<usize> {
+        self.label_focus
+            .filter(|&(row, _)| row == self.selected)
+            .map(|(_, index)| index)
+    }
+
+    /// Indices (into `Refs::labels_for`) of the labels drawn on `row`.
+    fn shown_labels(&self, row: usize) -> Vec<usize> {
+        let Some(Row::Commit(i)) = self.row(row) else {
+            return Vec::new();
+        };
+        self.refs
+            .labels_for(&self.commits[i].hash)
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| self.remotes || l.kind != RefKind::RemoteBranch)
+            .map(|(index, _)| index)
+            .collect()
     }
 
     fn menu_target(&self, hit: Hit) -> Option<Target> {
@@ -836,6 +893,7 @@ impl App {
             .map_or(0, |i| i + usize::from(self.has_uncommitted()));
         self.invalidate_uncommitted_detail();
         self.menu = None;
+        self.label_focus = None;
         self.refresh_error = None;
         Ok(())
     }

@@ -370,3 +370,43 @@ fn header_shows_refresh_error_truncated() {
     app.on_watch(WatchEvent::RefsChanged);
     assert!(!render(&app, 80, 6)[0].contains('!'));
 }
+
+#[test]
+fn focused_label_is_highlighted() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.branch("feature");
+    let mut app = app_for(&repo);
+    let (w, h) = (60, 6);
+    let reversed = |app: &App| {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let y = (0..h)
+            .find(|&y| {
+                (0..w)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    .contains("feature")
+            })
+            .expect("row with the label");
+        let line: String = (0..w).map(|x| buf[(x, y)].symbol()).collect();
+        let x = line.find("feature").unwrap() as u16;
+        buf[(x, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED)
+    };
+    assert!(!reversed(&app));
+    // labels_for order is not fixed: step until "feature" is the focused one.
+    let mut found = false;
+    for _ in 0..3 {
+        app.apply(Command::LabelNext).unwrap();
+        if reversed(&app) {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "focused label drawn reversed");
+    app.apply(Command::ClearLabelFocus).unwrap();
+    assert!(!reversed(&app));
+}

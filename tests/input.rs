@@ -101,6 +101,11 @@ fn key_table_maps_to_commands() {
         (Graph, shift('?'), Some(Help)),
         (Graph, key(KeyCode::Char('q')), Some(Quit)),
         (Graph, key(KeyCode::Char('x')), None),
+        (Graph, key(KeyCode::Left), Some(LabelPrev)),
+        (Graph, key(KeyCode::Char('h')), Some(LabelPrev)),
+        (Graph, key(KeyCode::Right), Some(LabelNext)),
+        (Graph, key(KeyCode::Char('l')), Some(LabelNext)),
+        (Detail, key(KeyCode::Right), None),
         (Detail, key(KeyCode::Char('j')), Some(FileDown)),
         (Detail, key(KeyCode::Char('k')), Some(FileUp)),
         (Detail, key(KeyCode::Enter), Some(OpenDiff)),
@@ -399,6 +404,7 @@ fn input_dialog_rejects_value_starting_with_dash() {
         title: "Create branch".to_string(),
         prompt: "Branch name".to_string(),
         value: String::new(),
+        name: true,
     });
     for c in "-x".chars() {
         assert_eq!(state.handle(Command::DialogChar(c)), None);
@@ -414,6 +420,23 @@ fn input_dialog_rejects_value_starting_with_dash() {
     assert_eq!(
         state.handle(Command::DialogAccept),
         Some(DialogOutcome::Accepted(Some("x".to_string())))
+    );
+}
+
+#[test]
+fn free_text_input_accepts_leading_dash() {
+    let mut state = DialogState::new(Dialog::Input {
+        title: "Commit".to_string(),
+        prompt: "Commit message:".to_string(),
+        value: String::new(),
+        name: false,
+    });
+    for c in "-wip".chars() {
+        state.handle(Command::DialogChar(c));
+    }
+    assert_eq!(
+        state.handle(Command::DialogAccept),
+        Some(DialogOutcome::Accepted(Some("-wip".to_string())))
     );
 }
 
