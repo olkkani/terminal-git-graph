@@ -159,6 +159,7 @@ fn plan_for(rows: &[GraphRow], style: &RasterStyle, first: usize, n: usize) -> V
                 key: row_key(r, &opts(), style),
                 rgba_w: w,
                 rgba_h: h,
+                z: 0,
             }
         })
         .collect()

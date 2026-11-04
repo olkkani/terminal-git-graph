@@ -29,8 +29,9 @@ Both keys are optional, in `~/.config/terminal-git-graph/config.toml`:
 # "text": never use graphics.
 # "graphics": like auto, but warn at startup if graphics cannot be used.
 renderer = "auto"
-# Round pill caps on badges (needs a font with the ◖ ◗ glyphs).
-nerd_font = false
+# Git icons from a Nerd Font on the ref badges. Set to false if the terminal font is
+# not a Nerd Font.
+nerd_font = true
 ```
 
 An invalid value gives a warning and the default is used. There are no command-line flags

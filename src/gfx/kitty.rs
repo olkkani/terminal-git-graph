@@ -53,9 +53,15 @@ pub fn transmit_rgba(
 }
 
 /// Place an image over `cols` x `rows` cells at the cursor without moving the cursor.
-pub fn place(id: ImageId, placement: u32, cols: u16, rows: u16) -> Vec<u8> {
+/// A negative `z` draws it under the text but above the cell backgrounds.
+pub fn place(id: ImageId, placement: u32, cols: u16, rows: u16, z: i32) -> Vec<u8> {
+    let z = if z == 0 {
+        String::new()
+    } else {
+        format!(",z={z}")
+    };
     apc(
-        &format!("a=p,i={},p={placement},c={cols},r={rows},q=2,C=1", id.0),
+        &format!("a=p,i={},p={placement},c={cols},r={rows},q=2,C=1{z}", id.0),
         &[],
     )
 }

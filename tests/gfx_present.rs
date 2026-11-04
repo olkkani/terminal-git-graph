@@ -13,6 +13,7 @@ fn row(row: u16, key: u64) -> RowPlacement {
         key,
         rgba_w: 2,
         rgba_h: 1,
+        z: 0,
     }
 }
 

@@ -210,3 +210,48 @@ fn uncommitted_row_is_dashed() {
     assert!(column.contains(&0), "{column:?}");
     assert!(column.iter().any(|&a| a > 0), "{column:?}");
 }
+
+#[test]
+fn crop_keeps_leftmost_pixels_of_each_line() {
+    use terminal_git_graph::gfx::raster::crop_rgba_width;
+    // 3x2 image, pixel value = its index; keep 2 columns.
+    let full: Vec<u8> = (0u8..6).flat_map(|p| [p; 4]).collect();
+    let cropped = crop_rgba_width(&full, 3, 2);
+    let expect: Vec<u8> = [0u8, 1, 3, 4].iter().flat_map(|&p| [p; 4]).collect();
+    assert_eq!(cropped, expect);
+}
+
+fn alpha(rgba: &[u8], w: u32, x: u32, y: u32) -> u8 {
+    rgba[((y * w + x) * 4 + 3) as usize]
+}
+
+#[test]
+fn badge_outline_is_a_rounded_border_with_a_clear_inside() {
+    let (w, h) = (60, 20);
+    let rgba = rasterize_badge(w, h, Rgb(10, 200, 30), false);
+    assert_eq!(rgba.len(), (w * h * 4) as usize);
+    // The corner is cut away by the rounding, the middle of the top edge is the border,
+    // and the inside is left to the text.
+    assert_eq!(alpha(&rgba, w, 0, 0), 0);
+    assert_eq!(alpha(&rgba, w, w / 2, h / 2), 0);
+    let top = (0..h / 2).map(|y| alpha(&rgba, w, w / 2, y)).max().unwrap();
+    assert!(top > 200, "top border alpha {top}");
+    assert!((0..w).all(|x| (0..h).all(|y| {
+        let i = ((y * w + x) * 4) as usize;
+        alpha(&rgba, w, x, y) == 0 || rgba[i..i + 3] == [10, 200, 30]
+    })));
+}
+
+#[test]
+fn filled_badge_is_tinted_inside() {
+    let (w, h) = (60, 20);
+    let plain = rasterize_badge(w, h, Rgb(10, 200, 30), false);
+    let filled = rasterize_badge(w, h, Rgb(10, 200, 30), true);
+    let tint = alpha(&filled, w, w / 2, h / 2);
+    assert!(tint > 20 && tint < 100, "tint alpha {tint}");
+    assert_eq!(alpha(&plain, w, w / 2, h / 2), 0);
+    assert_ne!(
+        badge_key(w, h, Rgb(10, 200, 30), true),
+        badge_key(w, h, Rgb(10, 200, 30), false)
+    );
+}

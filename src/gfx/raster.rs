@@ -33,6 +33,14 @@ fn size(width: usize, style: &RasterStyle) -> (u32, u32) {
     (width as u32 * 2 * style.cell.w as u32, style.cell.h as u32)
 }
 
+/// Keeps the leftmost `width` pixels of every line of a `full_width`-wide RGBA image.
+pub fn crop_rgba_width(rgba: &[u8], full_width: u32, width: u32) -> Vec<u8> {
+    let (full, keep) = (full_width as usize * 4, width as usize * 4);
+    rgba.chunks_exact(full)
+        .flat_map(|line| line[..keep].iter().copied())
+        .collect()
+}
+
 /// Renders one row as straight (non-premultiplied) RGBA on a transparent background.
 pub fn rasterize_row(row: &GraphRow, opts: &RenderOpts, style: &RasterStyle) -> Vec<u8> {
     let (w, h) = row_size(row, style);
@@ -93,6 +101,73 @@ pub fn rasterize_uncommitted(head_lane: usize, width: usize, style: &RasterStyle
     canvas.punch_disk(x, cy, r);
     canvas.ring(x, cy, r, half * 0.75, gray);
     canvas.into_rgba(1.0)
+}
+
+/// Gap between a badge outline and the edge of its cells, in pixels.
+const BADGE_INSET_PX: f32 = 1.0;
+/// Same, above and below: the outline fills the row's height so the text has the most room.
+const BADGE_INSET_Y_PX: f32 = 0.0;
+/// Corner radius of a badge outline as a share of its height (0.5 would be a full pill).
+const BADGE_RADIUS_RATIO: f32 = 0.25;
+/// Opacity of the tint inside a filled badge.
+const BADGE_FILL_ALPHA: f32 = 0.2;
+
+/// A pill-shaped outline `w` x `h` pixels, drawn under a badge's text, on a transparent
+/// background; `filled` also tints the inside. Straight RGBA.
+pub fn rasterize_badge(w: u32, h: u32, color: Rgb, filled: bool) -> Vec<u8> {
+    // One text row is all the height there is, so the outline runs close to the cell edges
+    // to stay clear of the text: thin line, a pixel of inset.
+    let stroke = (h as f32 / 18.0).max(1.0);
+    let (hw, hh) = (
+        w as f32 / 2.0 - BADGE_INSET_PX,
+        h as f32 / 2.0 - BADGE_INSET_Y_PX,
+    );
+    let radius = (h as f32 * BADGE_RADIUS_RATIO).min(hh).min(hw);
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let (px, py) = (
+                x as f32 + 0.5 - w as f32 / 2.0,
+                y as f32 + 0.5 - h as f32 / 2.0,
+            );
+            // Signed distance to the rounded box: negative inside.
+            let (qx, qy) = (px.abs() - (hw - radius), py.abs() - (hh - radius));
+            let d =
+                (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - radius;
+            let line = coverage(stroke / 2.0 - (d + stroke / 2.0).abs());
+            let fill = if filled {
+                coverage(-d) * BADGE_FILL_ALPHA
+            } else {
+                0.0
+            };
+            let a = line + fill * (1.0 - line);
+            if a <= 0.0 {
+                out.extend_from_slice(&[0, 0, 0, 0]);
+            } else {
+                out.extend_from_slice(&[color.0, color.1, color.2, (a * 255.0).round() as u8]);
+            }
+        }
+    }
+    out
+}
+
+/// Cache key of a badge outline.
+pub fn badge_key(w: u32, h: u32, color: Rgb, filled: bool) -> u64 {
+    let mut k = Fnv::new();
+    k.u64(0xBAD6E);
+    k.u64(w as u64);
+    k.u64(h as u64);
+    k.u64(u64::from_le_bytes([
+        color.0,
+        color.1,
+        color.2,
+        filled as u8,
+        0,
+        0,
+        0,
+        0,
+    ]));
+    k.finish()
 }
 
 /// Cache key over everything that affects the pixels (not the hash or selection).

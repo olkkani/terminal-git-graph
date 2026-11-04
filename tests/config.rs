@@ -109,7 +109,7 @@ fn invalid_renderer_warns_and_uses_auto() {
 }
 
 #[test]
-fn nerd_font_defaults_false_and_parses_true() {
-    assert!(!load_str("").0.nerd_font);
-    assert!(load_str("nerd_font = true\n").0.nerd_font);
+fn nerd_font_defaults_true_and_parses_false() {
+    assert!(load_str("").0.nerd_font);
+    assert!(!load_str("nerd_font = false\n").0.nerd_font);
 }

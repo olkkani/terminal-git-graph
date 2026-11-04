@@ -337,3 +337,23 @@ fn manygit_list_screen_has_no_placements() {
     frame(&mut term, &mut list, &mut session, &mut out);
     assert!(contains(&out, b"a=p,"));
 }
+
+#[test]
+fn badge_outlines_go_under_the_text_and_replace_the_parentheses() {
+    let repo = branched_repo();
+    let mut app = app_for(&repo);
+    let mut term = Terminal::new(TestBackend::new(80, 10)).unwrap();
+    let mut session = GfxSession::new(GfxMode::Graphics(CELL));
+    let mut out = Vec::new();
+    frame(&mut term, &mut app, &mut session, &mut out);
+    // Placed below the text (negative z), once per visible label.
+    assert!(contains(&out, b",z=-1"));
+    let labelled = (2..6)
+        .map(|y| line(&term, y))
+        .find(|l| l.contains("main"))
+        .expect("a row with the main label");
+    assert!(
+        !labelled.contains('(') && !labelled.contains(')'),
+        "{labelled:?}"
+    );
+}

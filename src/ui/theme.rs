@@ -26,14 +26,14 @@ impl ColorDepth {
 type Rgb = (u8, u8, u8);
 
 const PALETTE: [Rgb; PALETTE_LEN] = [
-    (0x4f, 0xa3, 0xf7), // blue
-    (0xe5, 0x73, 0x73), // red
-    (0x81, 0xc7, 0x84), // green
-    (0xff, 0xb7, 0x4d), // orange
-    (0xba, 0x68, 0xc8), // purple
-    (0x4d, 0xd0, 0xe1), // cyan
-    (0xf0, 0x62, 0x92), // pink
-    (0xdc, 0xe7, 0x75), // lime
+    (0x7a, 0xa2, 0xf7), // blue
+    (0xf7, 0x76, 0x8e), // red
+    (0x9e, 0xce, 0x6a), // green
+    (0xff, 0x9e, 0x64), // orange
+    (0xbb, 0x9a, 0xf7), // purple
+    (0x73, 0xda, 0xca), // teal
+    (0xf0, 0xa6, 0xca), // pink
+    (0xe0, 0xaf, 0x68), // yellow
 ];
 
 const HEAD_BG: Rgb = (0x26, 0x32, 0x38);
@@ -62,22 +62,24 @@ pub fn muted(depth: ColorDepth) -> Color {
     convert(MUTED, depth)
 }
 
-/// Pale version of a lane color, for the background of a non-checked-out local branch.
-pub fn lane_light(index: usize, depth: ColorDepth) -> Color {
-    convert(
-        mix(PALETTE[index % PALETTE_LEN], (255, 255, 255), 0.55),
-        depth,
-    )
+/// Subdued lane color, for the outline of remote branch badges.
+pub fn lane_dim(index: usize, depth: ColorDepth) -> Color {
+    convert(dim_rgb(index), depth)
 }
 
-/// Dark tint of a lane color, for the background of remote branch badges.
-pub fn lane_dark(index: usize, depth: ColorDepth) -> Color {
-    convert(mix(PALETTE[index % PALETTE_LEN], (0, 0, 0), 0.7), depth)
+fn dim_rgb(index: usize) -> Rgb {
+    mix(PALETTE[index % PALETTE_LEN], (0, 0, 0), 0.35)
 }
 
-/// Dark tint of the muted gray, for the background of tag badges.
-pub fn muted_dark(depth: ColorDepth) -> Color {
-    convert(mix(MUTED, (0, 0, 0), 0.7), depth)
+/// `lane_dim` as true RGB, for the badge outlines of the graphics renderer.
+pub fn lane_dim_rgb(index: usize) -> crate::gfx::raster::Rgb {
+    let (r, g, b) = dim_rgb(index);
+    crate::gfx::raster::Rgb(r, g, b)
+}
+
+/// `muted` as true RGB.
+pub fn muted_rgb() -> crate::gfx::raster::Rgb {
+    crate::gfx::raster::Rgb(MUTED.0, MUTED.1, MUTED.2)
 }
 
 /// `a` moved `t` of the way towards `b`.

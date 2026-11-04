@@ -10,27 +10,40 @@ pub struct BadgeGlyphs {
     pub tag: &'static str,
 }
 
-/// With `nerd_font` the pill ends in round caps; without it the badge is a square pill
-/// padded by a space on each side. `ascii` limits everything to ASCII (or nothing).
+/// Badges are outlined by round parentheses. `ascii` limits the icons to ASCII (or nothing);
+/// `nerd_font` swaps the icons for the git glyphs of a Nerd Font.
 pub fn badge_glyphs(nerd_font: bool, ascii: bool) -> BadgeGlyphs {
     if ascii {
         return BadgeGlyphs {
-            left_cap: "",
-            right_cap: "",
+            left_cap: "(",
+            right_cap: ")",
             check: "*",
             local: "",
             remote: "~",
             tag: "#",
         };
     }
-    // Round caps come from Geometric Shapes: the Nerd Font private-use caps are
-    // ambiguous-width, which the single-width rule forbids.
-    let (left_cap, right_cap) = if nerd_font { ("◖", "◗") } else { ("", "") };
+    if nerd_font {
+        // lazygit's Nerd Font v3 icons: nf-md-source_branch for local and remote branches
+        // alike (the remote shows in the name and color) and nf-fa-tag.
+        // Private-use glyphs are ambiguous width by the Unicode tables, but Nerd Font
+        // terminals draw them in one cell.
+        return BadgeGlyphs {
+            left_cap: "(",
+            right_cap: ")",
+            check: "✓",
+            local: "\u{f062c}",
+            remote: "\u{f062c}",
+            tag: "\u{f02b}",
+        };
+    }
     BadgeGlyphs {
-        left_cap,
-        right_cap,
+        left_cap: "(",
+        right_cap: ")",
         check: "✓",
-        local: "⎇",
+        // OCR FORK: a branch shape from the standard Unicode set. U+2387 (the old icon)
+        // is only in the system UI fonts, where it is the Option key.
+        local: "⑂",
         remote: "⇄",
         tag: "⚑",
     }

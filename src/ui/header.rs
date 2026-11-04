@@ -97,34 +97,25 @@ fn left_spans(app: &App, width: usize) -> (Vec<Span<'static>>, usize) {
     };
     let glyphs = badge_glyphs(app.nerd_font, app.ascii);
     let lane = theme::lane_color(0, app.depth);
-    let style = Style::new()
-        .fg(Color::Black)
-        .bg(lane)
-        .add_modifier(Modifier::BOLD);
-    // Round caps replace the padding space on each side, as on the table badges.
-    let pad = if glyphs.left_cap.is_empty() { " " } else { "" };
+    let style = Style::new().fg(lane).add_modifier(Modifier::BOLD);
     let icon = if glyphs.local.is_empty() {
         String::new()
     } else {
         format!("{} ", glyphs.local)
     };
     let caps = display_width(glyphs.left_cap) + display_width(glyphs.right_cap);
-    let chrome = display_width(&icon) + 2 * display_width(pad) + caps;
+    let chrome = display_width(&icon) + caps;
     // No room for the pill itself (a long Manygit repository name in a narrow pane).
     if width < chrome {
         return (Vec::new(), 0);
     }
     let name = truncate_to_width(&branch, width.saturating_sub(chrome));
-    let body = format!("{pad}{icon}{name}{pad}");
+    let body = format!("{icon}{name}");
     let mut used = display_width(&body) + caps;
     let mut spans = Vec::new();
-    if !glyphs.left_cap.is_empty() {
-        spans.push(Span::styled(glyphs.left_cap, Style::new().fg(lane)));
-    }
+    spans.push(Span::styled(glyphs.left_cap, style));
     spans.push(Span::styled(body, style));
-    if !glyphs.right_cap.is_empty() {
-        spans.push(Span::styled(glyphs.right_cap, Style::new().fg(lane)));
-    }
+    spans.push(Span::styled(glyphs.right_cap, style));
 
     if app.job_running() {
         let text = truncate_to_width("  Running…", width.saturating_sub(used));

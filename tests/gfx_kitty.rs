@@ -48,7 +48,7 @@ fn rgba_length_mismatch_errors() {
 
 #[test]
 fn place_has_no_cursor_movement_flag() {
-    let out = place(ImageId(7), 2, 10, 1);
+    let out = place(ImageId(7), 2, 10, 1, 0);
     assert_eq!(out, b"\x1b_Ga=p,i=7,p=2,c=10,r=1,q=2,C=1\x1b\\");
 }
 

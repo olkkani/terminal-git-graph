@@ -43,7 +43,7 @@ impl Default for Config {
             show_tags: false,
             theme: "default".to_string(),
             renderer: RendererSetting::Auto,
-            nerd_font: false,
+            nerd_font: true,
         }
     }
 }

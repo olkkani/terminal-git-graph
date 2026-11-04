@@ -13,6 +13,8 @@ pub struct RowPlacement {
     pub key: u64,
     pub rgba_w: u32,
     pub rgba_h: u32,
+    /// Kitty z-index: 0 over the text, negative under it.
+    pub z: i32,
 }
 
 /// Caches transmitted row images (LRU) and shows them with minimal terminal output.
@@ -91,7 +93,7 @@ impl Presenter {
                 }
             };
             buf.extend(kitty::move_to(p.col, p.row));
-            buf.extend(kitty::place(id, i as u32 + 1, p.cols, 1));
+            buf.extend(kitty::place(id, i as u32 + 1, p.cols, 1, p.z));
         }
         let in_plan: HashSet<u64> = plan.iter().map(|p| p.key).collect();
         while self.cache.len() > self.max_cached {

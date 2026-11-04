@@ -44,14 +44,19 @@ fn all_glyphs(nerd_font: bool, ascii: bool) -> Vec<&'static str> {
 }
 
 #[test]
-fn checked_out_branch_badge_is_filled_with_check() {
+fn checked_out_branch_badge_is_outlined_bold_with_check() {
     let repo = TestRepo::new();
     repo.commit("first");
     let app = app_for(&repo);
     let buf = draw(&app, 60, 6);
     let (x, y) = find_cell(&buf, "✓");
     let cell = &buf[(x, y)];
-    assert!(matches!(cell.bg, Color::Rgb(..)), "filled: {:?}", cell.bg);
+    assert!(
+        matches!(cell.fg, Color::Rgb(..)),
+        "lane color: {:?}",
+        cell.fg
+    );
+    assert_ne!(cell.bg, cell.fg, "outlined, not filled with the lane color");
     assert!(cell.modifier.contains(Modifier::BOLD));
     assert!(row_text(&buf, y).contains("✓main"), "{}", row_text(&buf, y));
 }
@@ -87,7 +92,10 @@ fn all_new_glyphs_are_single_width() {
                 continue;
             }
             assert_eq!(glyph.width(), 1, "{glyph:?}");
-            assert_eq!(glyph.width_cjk(), 1, "{glyph:?}");
+            // Nerd Font glyphs are private-use, which the tables call ambiguous width.
+            if !nerd {
+                assert_eq!(glyph.width_cjk(), 1, "{glyph:?}");
+            }
         }
     }
 }
@@ -102,21 +110,21 @@ fn ascii_glyphs_are_ascii_only() {
 }
 
 #[test]
-fn nerd_font_adds_round_caps() {
-    let plain = badge_glyphs(false, false);
-    let nerd = badge_glyphs(true, false);
-    assert!(plain.left_cap.is_empty() && plain.right_cap.is_empty());
-    assert!(!nerd.left_cap.is_empty() && !nerd.right_cap.is_empty());
-
+fn badges_are_wrapped_in_round_parentheses() {
     let repo = TestRepo::new();
     repo.commit("first");
-    let mut app = app_for(&repo);
-    app.set_nerd_font(true);
+    for (nerd, ascii) in [(false, false), (true, false), (false, true)] {
+        let g = badge_glyphs(nerd, ascii);
+        assert_eq!((g.left_cap, g.right_cap), ("(", ")"));
+    }
+    let app = app_for(&repo);
     let buf = draw(&app, 60, 6);
-    let (_, y) = find_cell(&buf, nerd.left_cap);
-    let line = row_text(&buf, y);
-    assert!(line.contains(nerd.right_cap), "{line}");
-    assert!(line.contains(nerd.left_cap), "{line}");
+    let (_, y) = find_cell(&buf, "✓");
+    assert!(
+        row_text(&buf, y).contains("(⑂ ✓main)"),
+        "{}",
+        row_text(&buf, y)
+    );
 }
 
 #[test]
@@ -146,11 +154,7 @@ fn badge_click_areas_match_drawn_width() {
         }
         let g = badge_glyphs(nerd, false);
         let drawn: String = (first..=last).map(|x| buf[(x, y)].symbol()).collect();
-        let expected = if nerd {
-            format!("{}{} alpha{}", g.left_cap, g.local, g.right_cap)
-        } else {
-            format!(" {} alpha ", g.local)
-        };
+        let expected = format!("{}{} alpha{}", g.left_cap, g.local, g.right_cap);
         assert_eq!(drawn, expected, "nerd={nerd}");
     }
 }

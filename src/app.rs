@@ -12,7 +12,9 @@ use ratatui::layout::Rect;
 use crate::actions::{needs_confirm, Action};
 use crate::clipboard::{self, CopyVia};
 use crate::gfx::present::RowPlacement;
-use crate::gfx::raster::{rasterize_row, rasterize_uncommitted, RasterStyle};
+use crate::gfx::raster::{
+    crop_rgba_width, rasterize_badge, rasterize_row, rasterize_uncommitted, row_size, RasterStyle,
+};
 use crate::gfx::session::raster_style;
 use crate::gfx::CellPx;
 use crate::git::detail::{
@@ -722,16 +724,38 @@ impl App {
             return None;
         }
         let style = raster_style(cell);
-        let rows = self.row_images(area, &style)?;
-        let placements = rows.iter().map(|(p, _)| *p).collect();
+        let mut rows = self.row_images(area, &style)?;
+        if let Some(table) = ui::areas(self, area).and_then(|a| a.table) {
+            rows.extend(ui::table::badge_images(self, table, &style));
+        }
+        let placements: Vec<RowPlacement> = rows.iter().map(|(p, _)| *p).collect();
         let images: HashMap<u64, RowImage> = rows.into_iter().map(|(p, i)| (p.key, i)).collect();
         let render_style = raster_style(cell);
-        let render = move |key: u64| match images.get(&key) {
-            Some(RowImage::Commit { row, opts }) => rasterize_row(row, opts, &render_style),
-            Some(RowImage::Uncommitted { head_lane, width }) => {
-                rasterize_uncommitted(*head_lane, *width, &render_style)
+        let widths: HashMap<u64, u32> = placements.iter().map(|p| (p.key, p.rgba_w)).collect();
+        let render = move |key: u64| {
+            let (full_w, rgba) = match images.get(&key) {
+                Some(RowImage::Commit { row, opts }) => (
+                    row_size(row, &render_style).0,
+                    rasterize_row(row, opts, &render_style),
+                ),
+                Some(RowImage::Uncommitted { head_lane, width }) => (
+                    2 * *width as u32 * render_style.cell.w as u32,
+                    rasterize_uncommitted(*head_lane, *width, &render_style),
+                ),
+                Some(RowImage::Badge {
+                    w,
+                    h,
+                    color,
+                    filled,
+                }) => {
+                    return rasterize_badge(*w, *h, *color, *filled);
+                }
+                None => return Vec::new(),
+            };
+            match widths.get(&key) {
+                Some(&w) if w < full_w => crop_rgba_width(&rgba, full_w, w),
+                _ => rgba,
             }
-            None => Vec::new(),
         };
         Some(GfxFrame {
             placements,

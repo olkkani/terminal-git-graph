@@ -3,13 +3,13 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
 use crate::app::{App, Row};
 use crate::gfx::present::RowPlacement;
-use crate::gfx::raster::{row_key, row_size, RasterStyle};
+use crate::gfx::raster::{badge_key, row_key, row_size, RasterStyle, Rgb};
 use crate::git::refs::{Head, RefKind, RefLabel};
 use crate::graph::lanes::GraphRow;
 use crate::graph::render::{render_row, render_uncommitted, Cell, RenderOpts};
@@ -228,6 +228,13 @@ pub(crate) enum RowImage {
         head_lane: usize,
         width: usize,
     },
+    /// The outline drawn under a ref label, `w` x `h` pixels.
+    Badge {
+        w: u32,
+        h: u32,
+        color: Rgb,
+        filled: bool,
+    },
 }
 
 /// One image per row in view of the table drawn in `area`, placed over its graph
@@ -264,11 +271,13 @@ pub(crate) fn row_images(
                 head_lane + 1,
             ),
         };
-        let cols = 2 * lanes;
-        if cols > layout.graph_w {
+        // A graph wider than its column is clipped on the right, like the text graph.
+        let full_cols = 2 * lanes;
+        let cols = full_cols.min(layout.graph_w);
+        if cols == 0 {
             return None;
         }
-        let (key, (rgba_w, rgba_h)) = match &image {
+        let (key, (full_w, rgba_h)) = match &image {
             RowImage::Commit { row, opts } => (row_key(row, opts, style), row_size(row, style)),
             RowImage::Uncommitted { head_lane, width } => {
                 let stand_in = uncommitted_stand_in(*head_lane, *width);
@@ -278,6 +287,14 @@ pub(crate) fn row_images(
                 };
                 (row_key(&stand_in, &opts, style), row_size(&stand_in, style))
             }
+            RowImage::Badge { .. } => unreachable!("only graph rows are built here"),
+        };
+        // The clipped image differs from the full one, so it gets its own cache key.
+        let (key, rgba_w) = if cols < full_cols {
+            let clipped = key.wrapping_add((cols as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            (clipped, full_w / full_cols as u32 * cols as u32)
+        } else {
+            (key, full_w)
         };
         let placement = RowPlacement {
             col: area.x,
@@ -286,10 +303,71 @@ pub(crate) fn row_images(
             key,
             rgba_w,
             rgba_h,
+            z: 0,
         };
         out.push((placement, image));
     }
     Some(out)
+}
+
+/// Outlines for the ref labels of the rows in view of the table drawn in `area`, to go
+/// under the label text (the text is then drawn without parentheses, see `badge_spans`).
+pub(crate) fn badge_images(
+    app: &App,
+    area: Rect,
+    style: &RasterStyle,
+) -> Vec<(RowPlacement, RowImage)> {
+    let layout = rows_layout(app, area);
+    let (cw, ch) = (style.cell.w as u32, style.cell.h as u32);
+    let mut out = Vec::new();
+    for (n, i) in layout.visible.clone().enumerate() {
+        let Some(Row::Commit(c)) = app.row(i) else {
+            continue;
+        };
+        let labels = app.refs.labels_for(&app.commits[c].hash);
+        let lane = app.graph[c].color;
+        let (_, _, places) = badge_spans(app, &labels, lane, layout.desc_w / 2, None);
+        for (index, cells) in places {
+            let (color, filled) = badge_look(app, labels[index], lane);
+            let (w, h) = (cells.len() as u32 * cw, ch);
+            let placement = RowPlacement {
+                col: area.x + layout.graph_w as u16 + 1 + cells.start as u16,
+                row: area.y + 1 + n as u16,
+                cols: cells.len() as u16,
+                key: badge_key(w, h, color, filled),
+                rgba_w: w,
+                rgba_h: h,
+                z: -1,
+            };
+            out.push((
+                placement,
+                RowImage::Badge {
+                    w,
+                    h,
+                    color,
+                    filled,
+                },
+            ));
+        }
+    }
+    out
+}
+
+/// Outline color of a label and whether its inside is tinted (the checked-out branch).
+fn badge_look(app: &App, label: &RefLabel, color: usize) -> (Rgb, bool) {
+    match label.kind {
+        RefKind::Head | RefKind::LocalBranch => (theme::lane_rgb(color), is_checked(app, label)),
+        RefKind::RemoteBranch => (theme::lane_dim_rgb(color), false),
+        RefKind::Tag => (theme::muted_rgb(), false),
+    }
+}
+
+fn is_checked(app: &App, label: &RefLabel) -> bool {
+    match label.kind {
+        RefKind::Head => true,
+        RefKind::LocalBranch => matches!(&app.refs.head, Head::Branch(b) if *b == label.name),
+        _ => false,
+    }
 }
 
 /// A row shaped like no real commit row (its color cannot occur), so its cache key and
@@ -417,26 +495,15 @@ fn badge_spans(
         if label.kind == RefKind::RemoteBranch && !app.remotes {
             continue;
         }
-        let checked = match label.kind {
-            RefKind::Head => true,
-            RefKind::LocalBranch => matches!(&app.refs.head, Head::Branch(b) if *b == label.name),
-            _ => false,
-        };
+        let checked = is_checked(app, label);
+        // Outlined, not filled: the lane color on the row's own background.
         let style = match label.kind {
-            RefKind::Head | RefKind::LocalBranch if checked => Style::new()
-                .fg(Color::Black)
-                .bg(lane)
-                .add_modifier(Modifier::BOLD),
-            RefKind::Head | RefKind::LocalBranch => Style::new()
-                .fg(Color::Black)
-                .bg(theme::lane_light(color, app.depth)),
-            RefKind::RemoteBranch => Style::new()
-                .fg(lane)
-                .bg(theme::lane_dark(color, app.depth))
-                .add_modifier(Modifier::BOLD),
-            RefKind::Tag => Style::new()
-                .fg(theme::muted(app.depth))
-                .bg(theme::muted_dark(app.depth)),
+            RefKind::Head | RefKind::LocalBranch if checked => {
+                Style::new().fg(lane).add_modifier(Modifier::BOLD)
+            }
+            RefKind::Head | RefKind::LocalBranch => Style::new().fg(lane),
+            RefKind::RemoteBranch => Style::new().fg(theme::lane_dim(color, app.depth)),
+            RefKind::Tag => Style::new().fg(theme::muted(app.depth)),
         };
         let style = if focus == Some(index) {
             style.add_modifier(Modifier::REVERSED | Modifier::UNDERLINED)
@@ -453,25 +520,18 @@ fn badge_spans(
         } else {
             format!("{icon} ")
         };
-        // Round caps replace the padding space on each side.
-        let (left, right) = if glyphs.left_cap.is_empty() {
+        // With the outline image under it, blanks take the place of the parentheses.
+        let (left, right) = if app.gfx_active {
             (" ", " ")
         } else {
-            ("", "")
+            (glyphs.left_cap, glyphs.right_cap)
         };
         let body = format!("{left}{icon}{}{right}", label_text(app, label, &glyphs));
-        let caps = display_width(glyphs.left_cap) + display_width(glyphs.right_cap);
-        let w = display_width(&body) + caps;
+        let w = display_width(&body);
         let remaining = budget - used;
         if w < remaining {
             places.push((index, used..used + w));
-            if !glyphs.left_cap.is_empty() {
-                spans.push(Span::styled(glyphs.left_cap, cap_style(&style)));
-            }
             spans.push(Span::styled(body, style));
-            if !glyphs.right_cap.is_empty() {
-                spans.push(Span::styled(glyphs.right_cap, cap_style(&style)));
-            }
             spans.push(Span::raw(" "));
             used += w + 1;
         } else {
@@ -487,11 +547,4 @@ fn badge_spans(
         }
     }
     (spans, used, places)
-}
-
-/// A cap is drawn in the pill's color on the row's own background.
-fn cap_style(pill: &Style) -> Style {
-    let mut style = Style::new();
-    style.fg = pill.bg;
-    style
 }

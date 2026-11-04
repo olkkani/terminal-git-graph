@@ -365,7 +365,7 @@ fn header_shows_refresh_error_truncated() {
     let rows = render(&app, 80, 6);
     let header = &rows[0];
     let rest = header
-        .strip_prefix(" ⎇ main   ! ")
+        .strip_prefix("(⑂ main)  ! ")
         .unwrap_or_else(|| panic!("{header:?}"));
     // The first line of git's message, cut to 40 cells (including "  ! ") with an ellipsis.
     let shown = &rest[..rest.find('…').expect("truncated")];
@@ -450,8 +450,8 @@ fn detached_head_row_shows_head_badge() {
         .iter()
         .find(|l| l.contains("first"))
         .expect("row of first");
-    // The badge is a padded pill, so a space of padding separates it from the subject.
-    assert!(row.contains("HEAD  first"), "{rows:?}");
+    // The badge ends in a parenthesis, then one space before the subject.
+    assert!(row.contains("HEAD) first"), "{rows:?}");
 }
 
 const HEART: &str = "❤️";

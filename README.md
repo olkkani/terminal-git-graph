@@ -75,8 +75,9 @@ theme = "default"
 # "auto" uses graphics when the terminal supports them; "text" never does;
 # "graphics" is like auto but warns if they cannot be used.
 renderer = "auto"
-# Round pill caps on badges (needs a font with the ◖ ◗ glyphs).
-nerd_font = false
+# Git icons from a Nerd Font on the ref badges. Set to false if the terminal font is
+# not a Nerd Font.
+nerd_font = true
 ```
 
 There is no settings screen. An invalid file is reported at startup and the defaults are
