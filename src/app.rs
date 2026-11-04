@@ -2,12 +2,21 @@
 //! and the commit detail / file diff opened from it.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
+use ratatui::layout::Rect;
+
 use crate::actions::{needs_confirm, Action};
 use crate::clipboard::{self, CopyVia};
+use crate::gfx::present::RowPlacement;
+use crate::gfx::raster::{
+    crop_rgba_width, rasterize_badge, rasterize_row, rasterize_uncommitted, row_size, RasterStyle,
+};
+use crate::gfx::session::raster_style;
+use crate::gfx::CellPx;
 use crate::git::detail::{
     load_file_diff, load_worktree_changes, load_worktree_diff, CommitDetail, DetailCache,
     FileChange,
@@ -20,9 +29,11 @@ use crate::graph::lanes::{GraphRow, LaneBuilder};
 use crate::input::{Hit, InputMode};
 use crate::jobs::JobRunner;
 use crate::menus::{confirm_dialog, input_dialog, menu_for, with_value, MenuCtx, Target};
+use crate::terminal::GfxFrame;
 use crate::ui;
 use crate::ui::dialog::{Dialog, DialogOutcome, DialogState};
 use crate::ui::menu::{Menu, MenuId, MenuItem};
+use crate::ui::table::RowImage;
 use crate::ui::theme::ColorDepth;
 use crate::watch::WatchEvent;
 
@@ -208,6 +219,9 @@ pub struct App {
     pub(crate) depth: ColorDepth,
     /// Draw the graph with ASCII instead of box-drawing characters.
     pub(crate) ascii: bool,
+    pub(crate) nerd_font: bool,
+    /// Graph cells are drawn blank because images are shown over them.
+    pub(crate) gfx_active: bool,
     bare: bool,
     pub(crate) scope: Scope,
     pub(crate) remotes: bool,
@@ -256,6 +270,8 @@ impl App {
             git,
             depth,
             ascii: false,
+            nerd_font: false,
+            gfx_active: false,
             bare,
             scope: Scope::AllBranches,
             remotes: true,
@@ -676,9 +692,83 @@ impl App {
         self.ascii = ascii;
     }
 
+    /// Ends ref badges in round caps; needs a font with those glyphs.
+    pub fn set_nerd_font(&mut self, on: bool) {
+        self.nerd_font = on;
+    }
+
     /// Replaces the clipboard writer (tests use one that cannot touch the real clipboard).
     pub fn set_copier(&mut self, copier: fn(&str) -> io::Result<CopyVia>) {
         self.copier = copier;
+    }
+
+    /// Draws the graph column blank, for row images to be shown over it.
+    pub fn set_gfx_active(&mut self, on: bool) {
+        self.gfx_active = on;
+    }
+
+    /// Where the row images go on a screen of size `area` as last drawn; empty when
+    /// no table is shown or the graph is too wide for images.
+    pub fn graph_placements(&self, area: Rect, cell: CellPx) -> Vec<RowPlacement> {
+        self.row_images(area, &raster_style(cell))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect()
+    }
+
+    /// The row images of the last draw in `area`; `None` while a menu, dialog or the
+    /// too-small message is shown, or the graph is too wide for images.
+    pub fn gfx_frame(&self, area: Rect, cell: CellPx) -> Option<GfxFrame> {
+        if self.menu.is_some() || self.dialog.is_some() || self.too_small() {
+            return None;
+        }
+        let style = raster_style(cell);
+        let mut rows = self.row_images(area, &style)?;
+        if let Some(table) = ui::areas(self, area).and_then(|a| a.table) {
+            rows.extend(ui::table::badge_images(self, table, &style));
+        }
+        let placements: Vec<RowPlacement> = rows.iter().map(|(p, _)| *p).collect();
+        let images: HashMap<u64, RowImage> = rows.into_iter().map(|(p, i)| (p.key, i)).collect();
+        let render_style = raster_style(cell);
+        let widths: HashMap<u64, u32> = placements.iter().map(|p| (p.key, p.rgba_w)).collect();
+        let render = move |key: u64| {
+            let (full_w, rgba) = match images.get(&key) {
+                Some(RowImage::Commit { row, opts }) => (
+                    row_size(row, &render_style).0,
+                    rasterize_row(row, opts, &render_style),
+                ),
+                Some(RowImage::Uncommitted { head_lane, width }) => (
+                    2 * *width as u32 * render_style.cell.w as u32,
+                    rasterize_uncommitted(*head_lane, *width, &render_style),
+                ),
+                Some(RowImage::Badge {
+                    w,
+                    h,
+                    color,
+                    filled,
+                }) => {
+                    return rasterize_badge(*w, *h, *color, *filled);
+                }
+                None => return Vec::new(),
+            };
+            match widths.get(&key) {
+                Some(&w) if w < full_w => crop_rgba_width(&rgba, full_w, w),
+                _ => rgba,
+            }
+        };
+        Some(GfxFrame {
+            placements,
+            style,
+            render: Box::new(render),
+        })
+    }
+
+    fn row_images(&self, area: Rect, style: &RasterStyle) -> Option<Vec<(RowPlacement, RowImage)>> {
+        match ui::areas(self, area)?.table {
+            Some(table) => ui::table::row_images(self, table, style),
+            None => Some(Vec::new()),
+        }
     }
 
     pub fn dialog(&self) -> Option<&DialogState> {

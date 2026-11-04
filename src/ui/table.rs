@@ -3,20 +3,26 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
 use crate::app::{App, Row};
+use crate::gfx::present::RowPlacement;
+use crate::gfx::raster::{badge_key, row_key, row_size, RasterStyle, Rgb};
 use crate::git::refs::{Head, RefKind, RefLabel};
+use crate::graph::lanes::GraphRow;
 use crate::graph::render::{render_row, render_uncommitted, Cell, RenderOpts};
 use crate::input::Hit;
+use crate::ui::glyphs::{badge_glyphs, BadgeGlyphs};
 use crate::ui::layout::{columns_for, display_width, fit_to_width, truncate_to_width};
 use crate::ui::theme;
 
 const DATE_W: usize = 4;
 const AUTHOR_W: usize = 12;
 const HASH_W: usize = 7;
+/// The graph column is at least as wide as its heading.
+const GRAPH_LABEL: &str = "Graph";
 
 /// Short age of `ts` relative to `now` (both Unix seconds): "now", "5m", "3h", "10d", "2mo", "1y".
 pub fn relative_time(now: i64, ts: i64) -> String {
@@ -55,15 +61,21 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
         graph_w,
         desc_w,
     } = rows_layout(app, area);
+    column_header(app, frame, area, graph_w, desc_w);
 
     for (n, (i, cells)) in visible.zip(graphs).enumerate() {
-        let y = area.y + n as u16;
+        let y = area.y + 1 + n as u16;
         let row_area = Rect {
             y,
             height: 1,
             ..area
         };
-        let mut spans = graph_spans(&cells, graph_w, app);
+        let mut spans = if app.gfx_active {
+            // Images go over these cells; the row background shows through them.
+            vec![Span::raw(" ".repeat(graph_w))]
+        } else {
+            graph_spans(&cells, graph_w, app)
+        };
         spans.push(Span::raw(" "));
         let mut bg = None;
         match app.row(i) {
@@ -128,7 +140,31 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
     }
 }
 
-/// Rows in view and the column widths they are drawn with.
+/// The dim first line naming the columns in view, each at its column's position.
+fn column_header(app: &App, frame: &mut Frame, area: Rect, graph_w: usize, desc_w: usize) {
+    let cols = columns_for(area.width);
+    let mut text = fit_to_width(GRAPH_LABEL, graph_w);
+    text.push(' ');
+    text.push_str(&fit_to_width("Description", desc_w));
+    text.push(' ');
+    text.push_str(&fit_to_width("Date", DATE_W));
+    if cols.author {
+        text.push(' ');
+        text.push_str(&fit_to_width("Author", AUTHOR_W));
+    }
+    if cols.hash {
+        text.push(' ');
+        text.push_str(&fit_to_width("Commit", HASH_W));
+    }
+    let style = Style::new()
+        .fg(theme::muted(app.depth))
+        .add_modifier(Modifier::DIM);
+    frame
+        .buffer_mut()
+        .set_line(area.x, area.y, &Line::styled(text, style), area.width);
+}
+
+/// Rows in view (below the column header) and the column widths they are drawn with.
 struct RowsLayout {
     visible: std::ops::Range<usize>,
     graphs: Vec<Vec<Cell>>,
@@ -138,13 +174,9 @@ struct RowsLayout {
 }
 
 fn rows_layout(app: &App, area: Rect) -> RowsLayout {
-    let visible = visible_rows(app, area.height as usize);
+    let visible = visible_rows(app, area.height.saturating_sub(1) as usize);
     let head = app.head_hash();
-    let head_lane = app
-        .commits
-        .iter()
-        .position(|c| Some(c.hash.as_str()) == head)
-        .map_or(0, |i| app.graph[i].lane);
+    let head_lane = head_lane(app);
 
     let graphs: Vec<Vec<Cell>> = visible
         .clone()
@@ -167,6 +199,7 @@ fn rows_layout(app: &App, area: Rect) -> RowsLayout {
         .map(Vec::len)
         .max()
         .unwrap_or(0)
+        .max(GRAPH_LABEL.len())
         .min(width / 3);
     let fixed = graph_w
         + 1
@@ -184,14 +217,193 @@ fn rows_layout(app: &App, area: Rect) -> RowsLayout {
     }
 }
 
-/// What is at `pos` in the table drawn in `area`: a ref label or else the row.
+/// What a row image shows.
+pub(crate) enum RowImage {
+    Commit {
+        row: GraphRow,
+        opts: RenderOpts,
+    },
+    /// The working-tree row: a dashed line on HEAD's lane, `width` lanes wide.
+    Uncommitted {
+        head_lane: usize,
+        width: usize,
+    },
+    /// The outline drawn under a ref label, `w` x `h` pixels.
+    Badge {
+        w: u32,
+        h: u32,
+        color: Rgb,
+        filled: bool,
+    },
+}
+
+/// One image per row in view of the table drawn in `area`, placed over its graph
+/// cells. `None` when a row's graph is wider than the graph column, which only the
+/// text graph can cut.
+pub(crate) fn row_images(
+    app: &App,
+    area: Rect,
+    style: &RasterStyle,
+) -> Option<Vec<(RowPlacement, RowImage)>> {
+    if app.row_count() == 0 {
+        return Some(Vec::new());
+    }
+    let layout = rows_layout(app, area);
+    let head = app.head_hash();
+    let head_lane = head_lane(app);
+    let mut out = Vec::new();
+    for (n, i) in layout.visible.enumerate() {
+        let (image, lanes) = match app.row(i) {
+            Some(Row::Commit(c)) => {
+                let row = app.graph[c].clone();
+                let opts = RenderOpts {
+                    is_head: Some(app.commits[c].hash.as_str()) == head,
+                    ascii: false,
+                };
+                let lanes = row.width;
+                (RowImage::Commit { row, opts }, lanes)
+            }
+            _ => (
+                RowImage::Uncommitted {
+                    head_lane,
+                    width: head_lane + 1,
+                },
+                head_lane + 1,
+            ),
+        };
+        // A graph wider than its column is clipped on the right, like the text graph.
+        let full_cols = 2 * lanes;
+        let cols = full_cols.min(layout.graph_w);
+        if cols == 0 {
+            return None;
+        }
+        let (key, (full_w, rgba_h)) = match &image {
+            RowImage::Commit { row, opts } => (row_key(row, opts, style), row_size(row, style)),
+            RowImage::Uncommitted { head_lane, width } => {
+                let stand_in = uncommitted_stand_in(*head_lane, *width);
+                let opts = RenderOpts {
+                    is_head: false,
+                    ascii: false,
+                };
+                (row_key(&stand_in, &opts, style), row_size(&stand_in, style))
+            }
+            RowImage::Badge { .. } => unreachable!("only graph rows are built here"),
+        };
+        // The clipped image differs from the full one, so it gets its own cache key.
+        let (key, rgba_w) = if cols < full_cols {
+            let clipped = key.wrapping_add((cols as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            (clipped, full_w / full_cols as u32 * cols as u32)
+        } else {
+            (key, full_w)
+        };
+        let placement = RowPlacement {
+            col: area.x,
+            row: area.y + 1 + n as u16,
+            cols: cols as u16,
+            key,
+            rgba_w,
+            rgba_h,
+            z: 0,
+        };
+        out.push((placement, image));
+    }
+    Some(out)
+}
+
+/// Outlines for the ref labels of the rows in view of the table drawn in `area`, to go
+/// under the label text (the text is then drawn without parentheses, see `badge_spans`).
+pub(crate) fn badge_images(
+    app: &App,
+    area: Rect,
+    style: &RasterStyle,
+) -> Vec<(RowPlacement, RowImage)> {
+    let layout = rows_layout(app, area);
+    let (cw, ch) = (style.cell.w as u32, style.cell.h as u32);
+    let mut out = Vec::new();
+    for (n, i) in layout.visible.clone().enumerate() {
+        let Some(Row::Commit(c)) = app.row(i) else {
+            continue;
+        };
+        let labels = app.refs.labels_for(&app.commits[c].hash);
+        let lane = app.graph[c].color;
+        let (_, _, places) = badge_spans(app, &labels, lane, layout.desc_w / 2, None);
+        for (index, cells) in places {
+            let (color, filled) = badge_look(app, labels[index], lane);
+            let (w, h) = (cells.len() as u32 * cw, ch);
+            let placement = RowPlacement {
+                col: area.x + layout.graph_w as u16 + 1 + cells.start as u16,
+                row: area.y + 1 + n as u16,
+                cols: cells.len() as u16,
+                key: badge_key(w, h, color, filled),
+                rgba_w: w,
+                rgba_h: h,
+                z: -1,
+            };
+            out.push((
+                placement,
+                RowImage::Badge {
+                    w,
+                    h,
+                    color,
+                    filled,
+                },
+            ));
+        }
+    }
+    out
+}
+
+/// Outline color of a label and whether its inside is tinted (the checked-out branch).
+fn badge_look(app: &App, label: &RefLabel, color: usize) -> (Rgb, bool) {
+    match label.kind {
+        RefKind::Head | RefKind::LocalBranch => (theme::lane_rgb(color), is_checked(app, label)),
+        RefKind::RemoteBranch => (theme::lane_dim_rgb(color), false),
+        RefKind::Tag => (theme::muted_rgb(), false),
+    }
+}
+
+fn is_checked(app: &App, label: &RefLabel) -> bool {
+    match label.kind {
+        RefKind::Head => true,
+        RefKind::LocalBranch => matches!(&app.refs.head, Head::Branch(b) if *b == label.name),
+        _ => false,
+    }
+}
+
+/// A row shaped like no real commit row (its color cannot occur), so its cache key and
+/// size stand for the uncommitted image without colliding with commit rows.
+fn uncommitted_stand_in(head_lane: usize, width: usize) -> GraphRow {
+    GraphRow {
+        hash: String::new(),
+        lane: head_lane,
+        color: usize::MAX,
+        pass: Vec::new(),
+        joins: Vec::new(),
+        forks: Vec::new(),
+        from_above: false,
+        continues: false,
+        is_merge: false,
+        width,
+    }
+}
+
+fn head_lane(app: &App) -> usize {
+    let head = app.head_hash();
+    app.commits
+        .iter()
+        .position(|c| Some(c.hash.as_str()) == head)
+        .map_or(0, |i| app.graph[i].lane)
+}
+
+/// What is at `pos` in the table drawn in `area`: a ref label or else the row. The
+/// column header line hits nothing.
 pub(crate) fn hit(app: &App, area: Rect, pos: (u16, u16)) -> Option<Hit> {
     let (x, y) = pos;
-    if x < area.x || x >= area.right() || y < area.y || y >= area.bottom() {
+    if x < area.x || x >= area.right() || y <= area.y || y >= area.bottom() {
         return None;
     }
     let layout = rows_layout(app, area);
-    let i = layout.visible.start + (y - area.y) as usize;
+    let i = layout.visible.start + (y - area.y - 1) as usize;
     if !layout.visible.contains(&i) {
         return None;
     }
@@ -244,11 +456,11 @@ fn graph_spans(cells: &[Cell], width: usize, app: &App) -> Vec<Span<'static>> {
     spans
 }
 
-fn label_text(app: &App, label: &RefLabel) -> String {
+fn label_text(app: &App, label: &RefLabel, glyphs: &BadgeGlyphs) -> String {
     match label.kind {
         RefKind::LocalBranch => {
             let checked = matches!(&app.refs.head, Head::Branch(b) if *b == label.name);
-            let check = if checked { "✓" } else { "" };
+            let check = if checked { glyphs.check } else { "" };
             let mut text = format!("{check}{}", label.name);
             if app.remotes {
                 for r in &label.remotes {
@@ -274,6 +486,7 @@ fn badge_spans(
     budget: usize,
     focus: Option<usize>,
 ) -> (Vec<Span<'static>>, usize, BadgePlaces) {
+    let glyphs = badge_glyphs(app.nerd_font, app.ascii);
     let lane = theme::lane_color(color, app.depth);
     let mut spans = Vec::new();
     let mut used = 0;
@@ -282,29 +495,47 @@ fn badge_spans(
         if label.kind == RefKind::RemoteBranch && !app.remotes {
             continue;
         }
+        let checked = is_checked(app, label);
+        // Outlined, not filled: the lane color on the row's own background.
         let style = match label.kind {
-            RefKind::Head | RefKind::LocalBranch => Style::new()
-                .fg(Color::Black)
-                .bg(lane)
-                .add_modifier(Modifier::BOLD),
-            RefKind::RemoteBranch => Style::new().fg(lane).add_modifier(Modifier::BOLD),
-            RefKind::Tag => Style::new().fg(Color::Black).bg(theme::muted(app.depth)),
+            RefKind::Head | RefKind::LocalBranch if checked => {
+                Style::new().fg(lane).add_modifier(Modifier::BOLD)
+            }
+            RefKind::Head | RefKind::LocalBranch => Style::new().fg(lane),
+            RefKind::RemoteBranch => Style::new().fg(theme::lane_dim(color, app.depth)),
+            RefKind::Tag => Style::new().fg(theme::muted(app.depth)),
         };
         let style = if focus == Some(index) {
             style.add_modifier(Modifier::REVERSED | Modifier::UNDERLINED)
         } else {
             style
         };
-        let text = label_text(app, label);
-        let w = display_width(&text);
+        let icon = match label.kind {
+            RefKind::Head | RefKind::LocalBranch => glyphs.local,
+            RefKind::RemoteBranch => glyphs.remote,
+            RefKind::Tag => glyphs.tag,
+        };
+        let icon = if icon.is_empty() {
+            String::new()
+        } else {
+            format!("{icon} ")
+        };
+        // With the outline image under it, blanks take the place of the parentheses.
+        let (left, right) = if app.gfx_active {
+            (" ", " ")
+        } else {
+            (glyphs.left_cap, glyphs.right_cap)
+        };
+        let body = format!("{left}{icon}{}{right}", label_text(app, label, &glyphs));
+        let w = display_width(&body);
         let remaining = budget - used;
         if w < remaining {
             places.push((index, used..used + w));
-            spans.push(Span::styled(text, style));
+            spans.push(Span::styled(body, style));
             spans.push(Span::raw(" "));
             used += w + 1;
         } else {
-            let cut = truncate_to_width(&text, remaining.saturating_sub(1));
+            let cut = truncate_to_width(&body, remaining.saturating_sub(1));
             if !cut.is_empty() {
                 let w = display_width(&cut);
                 places.push((index, used..used + w));

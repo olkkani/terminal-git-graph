@@ -7,6 +7,23 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+/// Which renderer the graph column uses; `Auto` picks graphics only when detected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RendererSetting {
+    Auto,
+    Text,
+    Graphics,
+}
+
+fn parse_renderer(s: &str) -> Option<RendererSetting> {
+    match s {
+        "auto" => Some(RendererSetting::Auto),
+        "text" => Some(RendererSetting::Text),
+        "graphics" => Some(RendererSetting::Graphics),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     /// How many folder levels Manygit searches, 1..=5.
@@ -14,6 +31,9 @@ pub struct Config {
     /// Show each repository's latest tag in the Manygit list.
     pub show_tags: bool,
     pub theme: String,
+    pub renderer: RendererSetting,
+    /// Use Nerd Font glyphs.
+    pub nerd_font: bool,
 }
 
 impl Default for Config {
@@ -22,6 +42,8 @@ impl Default for Config {
             scan_depth: 3,
             show_tags: false,
             theme: "default".to_string(),
+            renderer: RendererSetting::Auto,
+            nerd_font: true,
         }
     }
 }
@@ -33,6 +55,8 @@ struct RawConfig {
     scan_depth: i64,
     show_tags: bool,
     theme: String,
+    renderer: String,
+    nerd_font: bool,
 }
 
 impl Default for RawConfig {
@@ -42,6 +66,8 @@ impl Default for RawConfig {
             scan_depth: d.scan_depth.into(),
             show_tags: d.show_tags,
             theme: d.theme,
+            renderer: "auto".to_string(),
+            nerd_font: d.nerd_font,
         }
     }
 }
@@ -56,14 +82,29 @@ impl Config {
             Err(e) => return (Config::default(), Some(warning(path, &e.to_string()))),
         };
         match toml::from_str::<RawConfig>(&text) {
-            Ok(raw) => (
-                Config {
-                    scan_depth: raw.scan_depth.clamp(1, 5) as u8,
-                    show_tags: raw.show_tags,
-                    theme: raw.theme,
-                },
-                None,
-            ),
+            Ok(raw) => {
+                let (renderer, warn) = match parse_renderer(&raw.renderer) {
+                    Some(r) => (r, None),
+                    None => (
+                        RendererSetting::Auto,
+                        Some(format!(
+                            "Invalid renderer {:?} in {} (expected auto, text or graphics). Using auto.",
+                            raw.renderer,
+                            path.display()
+                        )),
+                    ),
+                };
+                (
+                    Config {
+                        scan_depth: raw.scan_depth.clamp(1, 5) as u8,
+                        show_tags: raw.show_tags,
+                        theme: raw.theme,
+                        renderer,
+                        nerd_font: raw.nerd_font,
+                    },
+                    warn,
+                )
+            }
             Err(e) => (Config::default(), Some(warning(path, e.message()))),
         }
     }

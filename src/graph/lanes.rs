@@ -21,6 +21,8 @@ pub struct GraphRow {
     pub joins: Vec<LaneSeg>,
     /// Lanes leaving this node downward toward the 2nd and later parents.
     pub forks: Vec<LaneSeg>,
+    /// Whether the node's own lane comes down from a child in an earlier row.
+    pub from_above: bool,
     /// Whether the node's own lane continues down to its first parent.
     pub continues: bool,
     pub is_merge: bool,
@@ -58,6 +60,7 @@ impl LaneBuilder {
             })
             .collect();
 
+        let from_above = !waiting.is_empty();
         let (lane, color) = match waiting.first() {
             Some(&i) => (i, self.lanes[i].as_ref().unwrap().1),
             None => {
@@ -131,6 +134,7 @@ impl LaneBuilder {
             pass,
             joins,
             forks,
+            from_above,
             continues,
             is_merge: c.parents.len() > 1,
             width,

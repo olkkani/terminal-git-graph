@@ -13,6 +13,7 @@ fn row(lane: usize, width: usize) -> GraphRow {
         pass: vec![],
         joins: vec![],
         forks: vec![],
+        from_above: true,
         continues: true,
         is_merge: false,
         width,

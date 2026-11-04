@@ -371,3 +371,86 @@ fn dialog_wrap_keeps_emoji_graphemes_whole() {
     let out = screen(&app, 40, 20);
     assert_eq!(out.matches(family).count(), 20, "{out}");
 }
+
+/// Cell where `text` starts on the screen row that contains `row_hint` (ASCII rows only).
+fn cell_of<'a>(buf: &'a Buffer, row_hint: &str, text: &str) -> &'a ratatui::buffer::Cell {
+    let rows = lines(buf);
+    let y = rows
+        .iter()
+        .rposition(|l| l.contains(row_hint))
+        .unwrap_or_else(|| panic!("no {row_hint:?} in {rows:?}"));
+    let x = rows[y]
+        .find(text)
+        .unwrap_or_else(|| panic!("{text:?} in {:?}", rows[y]));
+    &buf[(rows[y][..x].width() as u16, y as u16)]
+}
+
+fn detail_fixture() -> (TestRepo, App, String) {
+    let repo = TestRepo::new();
+    repo.commit_file("a.txt", "one\n", "base");
+    repo.commit_file("a.txt", "one\ntwo\nthree\n", "grow a\n\nbody");
+    repo.commit_file("b.txt", "x\n", "add b");
+    let mut app = app_for(&repo);
+    open_detail(&mut app);
+    let hash = repo.git(&["rev-parse", "HEAD"]);
+    (repo, app, hash.trim().to_string())
+}
+
+#[test]
+fn detail_labels_are_dimmed() {
+    let (_r, app, _) = detail_fixture();
+    let buf = draw(&app, 80, 40);
+    let cell = cell_of(&buf, "Author", "Author");
+    assert!(cell.modifier.contains(ratatui::style::Modifier::DIM));
+    let value = cell_of(&buf, "Author", "Test User");
+    assert!(!value.modifier.contains(ratatui::style::Modifier::DIM));
+}
+
+#[test]
+fn commit_hash_uses_accent_color() {
+    let (_r, app, hash) = detail_fixture();
+    let buf = draw(&app, 80, 40);
+    let cell = cell_of(&buf, "Commit", &hash);
+    assert_eq!(cell.fg, Color::Cyan);
+}
+
+#[test]
+fn subject_is_bold() {
+    let (_r, app, _) = detail_fixture();
+    let buf = draw(&app, 80, 40);
+    let cell = cell_of(&buf, "add b", "add b");
+    assert!(cell.modifier.contains(ratatui::style::Modifier::BOLD));
+}
+
+#[test]
+fn file_status_letters_are_colored() {
+    let repo = TestRepo::new();
+    repo.commit_file("mod.txt", "m\n", "base m");
+    repo.commit_file("gone.txt", "g\n", "base g");
+    std::fs::write(repo.path().join("mod.txt"), "m2\n").unwrap();
+    std::fs::write(repo.path().join("new.txt"), "n\n").unwrap();
+    repo.git(&["rm", "-q", "gone.txt"]);
+    repo.git(&["add", "-A"]);
+    repo.git(&["commit", "-q", "-m", "all kinds"]);
+    let mut app = app_for(&repo);
+    open_detail(&mut app);
+    let buf = draw(&app, 80, 40);
+    assert_eq!(cell_of(&buf, "new.txt", "A ").fg, Color::Green);
+    assert_eq!(cell_of(&buf, "mod.txt", "M ").fg, Color::Yellow);
+    assert_eq!(cell_of(&buf, "gone.txt", "D ").fg, Color::Red);
+}
+
+#[test]
+fn added_and_deleted_counts_are_green_and_red() {
+    let repo = TestRepo::new();
+    repo.commit_file("a.txt", "one\ntwo\n", "base");
+    repo.commit_file("a.txt", "one\nthree\nfour\n", "edit");
+    let mut app = app_for(&repo);
+    open_detail(&mut app);
+    let buf = draw(&app, 80, 40);
+    // File row and the summary row on the "Files" line.
+    assert_eq!(cell_of(&buf, "a.txt", "+2").fg, Color::Green);
+    assert_eq!(cell_of(&buf, "a.txt", "-1").fg, Color::Red);
+    assert_eq!(cell_of(&buf, "Files (1)", "+2").fg, Color::Green);
+    assert_eq!(cell_of(&buf, "Files (1)", "-1").fg, Color::Red);
+}

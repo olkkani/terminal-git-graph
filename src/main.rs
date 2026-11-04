@@ -4,10 +4,13 @@ use std::fs;
 use std::io::{stdout, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::Parser;
 use terminal_git_graph::app::App;
-use terminal_git_graph::config::{default_config_path, Config};
+use terminal_git_graph::config::{default_config_path, Config, RendererSetting};
+use terminal_git_graph::gfx::detect::{env_blocks_graphics, probe_terminal};
+use terminal_git_graph::gfx::session::{decide_mode, GfxMode};
 use terminal_git_graph::manygit::scan::scan;
 use terminal_git_graph::manygit::view::Manygit;
 use terminal_git_graph::repo::{self, RepoTarget};
@@ -79,13 +82,30 @@ fn start(path: &Path) -> Result<(), Failure> {
     let depth = ColorDepth::detect(env::var("COLORTERM").ok().as_deref(), term.as_deref());
     // The Linux console and dumb terminals have no box-drawing characters.
     let ascii = matches!(term.as_deref(), Some("linux" | "dumb"));
+    // Asked once, before the event loop reads any input.
+    let blocked = env_blocks_graphics(
+        env::var_os("TMUX").is_some(),
+        env::var_os("ZELLIJ").is_some(),
+        term.as_deref(),
+    );
+    let probed = if !blocked && config.renderer != RendererSetting::Text {
+        probe_terminal(Duration::from_millis(300))
+    } else {
+        None
+    };
+    let (mode, gfx_warning) = decide_mode(config.renderer, probed, blocked);
+    let warning = match (warning, gfx_warning) {
+        (Some(a), Some(b)) => Some(format!("{a}\n\n{b}")),
+        (a, b) => a.or(b),
+    };
     match repo::detect(path)? {
         // A bare repository's graph has no uncommitted row or working-tree actions;
         // `App` finds that out itself.
         RepoTarget::Repo { git, .. } => {
             let mut app = App::new(git, depth)?;
             app.set_ascii(ascii);
-            show(&mut app, warning)
+            app.set_nerd_font(config.nerd_font);
+            show(&mut app, warning, mode)
         }
         RepoTarget::Folder(folder) => {
             let root = fs::canonicalize(&folder).unwrap_or(folder);
@@ -93,19 +113,20 @@ fn start(path: &Path) -> Result<(), Failure> {
             let entries = scan(&root, config.scan_depth, &home)?;
             let mut list = Manygit::new(root, entries, config.show_tags, depth);
             list.set_ascii(ascii);
-            show(&mut list, warning)
+            list.set_nerd_font(config.nerd_font);
+            show(&mut list, warning, mode)
         }
     }
 }
 
-/// Runs `screen`, first showing the settings-file warning if there is one.
-fn show(screen: &mut impl Screen, warning: Option<String>) -> Result<(), Failure> {
+/// Runs `screen` in `mode`, first showing the settings warning if there is one.
+fn show(screen: &mut impl Screen, warning: Option<String>, mode: GfxMode) -> Result<(), Failure> {
     if let Some(body) = warning {
         screen.show_dialog(Dialog::Info {
             title: "Settings".to_string(),
             body,
         });
     }
-    terminal::run(screen)?;
+    terminal::run(screen, mode)?;
     Ok(())
 }

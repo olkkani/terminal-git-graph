@@ -799,6 +799,7 @@ dependencies = [
  "base64",
  "clap",
  "crossterm",
+ "libc",
  "notify",
  "ratatui",
  "serde",

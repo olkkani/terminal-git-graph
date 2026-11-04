@@ -9,9 +9,14 @@ use std::time::{Duration, Instant};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use terminal_git_graph::app::{App, Command};
+use terminal_git_graph::gfx::present::{Presenter, RowPlacement};
+use terminal_git_graph::gfx::raster::{rasterize_row, row_key, row_size, RasterStyle};
+use terminal_git_graph::gfx::session::raster_style;
+use terminal_git_graph::gfx::CellPx;
 use terminal_git_graph::git::log::{load_commits, LogQuery, Scope};
 use terminal_git_graph::git::Git;
-use terminal_git_graph::graph::lanes::LaneBuilder;
+use terminal_git_graph::graph::lanes::{GraphRow, LaneBuilder, LaneSeg};
+use terminal_git_graph::graph::render::RenderOpts;
 use terminal_git_graph::ui::theme::ColorDepth;
 use terminal_git_graph::watch::watch;
 
@@ -97,4 +102,168 @@ fn lane_building_50k_rows_under_one_second() {
     assert_eq!(rows.len(), COMMITS);
     assert!(rows.iter().any(|r| r.is_merge));
     assert!(took < Duration::from_secs(1), "lane building took {took:?}");
+}
+
+const CELL: CellPx = CellPx { w: 10, h: 20 };
+
+/// 40 rows that all differ (lane, color, joins/forks, merge flag), like a busy screen.
+fn distinct_rows() -> Vec<GraphRow> {
+    (0..40)
+        .map(|i| {
+            let lane = i % 6;
+            let seg = |l: usize| LaneSeg {
+                lane: l,
+                color: (l + i) % 8,
+            };
+            GraphRow {
+                hash: format!("{i:040x}"),
+                lane,
+                color: i % 8,
+                pass: (0..i % 4).filter(|&l| l != lane).map(seg).collect(),
+                joins: if i % 3 == 0 {
+                    vec![seg(lane + 1)]
+                } else {
+                    vec![]
+                },
+                forks: if i % 5 == 0 {
+                    vec![seg(lane + 2)]
+                } else {
+                    vec![]
+                },
+                from_above: i % 7 != 0,
+                continues: true,
+                is_merge: i % 4 == 0,
+                width: 8,
+            }
+        })
+        .collect()
+}
+
+fn opts() -> RenderOpts {
+    RenderOpts {
+        is_head: false,
+        ascii: false,
+    }
+}
+
+fn plan_for(rows: &[GraphRow], style: &RasterStyle, first: usize, n: usize) -> Vec<RowPlacement> {
+    rows[first..first + n]
+        .iter()
+        .enumerate()
+        .map(|(y, r)| {
+            let (w, h) = row_size(r, style);
+            RowPlacement {
+                col: 2,
+                row: y as u16,
+                cols: r.width as u16 * 2,
+                key: row_key(r, &opts(), style),
+                rgba_w: w,
+                rgba_h: h,
+                z: 0,
+            }
+        })
+        .collect()
+}
+
+fn present_plan(
+    p: &mut Presenter,
+    out: &mut Vec<u8>,
+    rows: &[GraphRow],
+    style: &RasterStyle,
+    plan: &[RowPlacement],
+) {
+    let mut render = |key: u64| {
+        let row = rows
+            .iter()
+            .find(|r| row_key(r, &opts(), style) == key)
+            .expect("row for key");
+        rasterize_row(row, &opts(), style)
+    };
+    p.present(out, CELL, plan, &mut render).unwrap();
+}
+
+#[test]
+#[ignore = "slow: run with cargo test --release -- --ignored"]
+fn raster_40_rows_under_5ms() {
+    let rows = distinct_rows();
+    let style = raster_style(CELL);
+
+    let start = Instant::now();
+    let bytes: usize = rows
+        .iter()
+        .map(|r| rasterize_row(r, &opts(), &style).len())
+        .sum();
+    let took = start.elapsed();
+
+    assert!(bytes > 0);
+    assert!(
+        took < Duration::from_millis(5),
+        "rasterizing 40 rows took {took:?}"
+    );
+}
+
+#[test]
+#[ignore = "slow: run with cargo test --release -- --ignored"]
+fn present_scroll_step_under_2ms() {
+    // 41 distinct rows: the second screen shifts down one row, so all images are cached.
+    let mut rows = distinct_rows();
+    rows.push(rows[0].clone());
+    rows[40].hash = "x".repeat(40);
+    rows[40].lane = 7;
+    let style = raster_style(CELL);
+    let mut p = Presenter::new(512);
+    let mut out = Vec::new();
+    // Warm the cache with both screens' images.
+    present_plan(
+        &mut p,
+        &mut out,
+        &rows,
+        &style,
+        &plan_for(&rows, &style, 0, 40),
+    );
+    present_plan(
+        &mut p,
+        &mut out,
+        &rows,
+        &style,
+        &plan_for(&rows, &style, 1, 40),
+    );
+    present_plan(
+        &mut p,
+        &mut out,
+        &rows,
+        &style,
+        &plan_for(&rows, &style, 0, 40),
+    );
+
+    out.clear();
+    let plan = plan_for(&rows, &style, 1, 40);
+    let start = Instant::now();
+    present_plan(&mut p, &mut out, &rows, &style, &plan);
+    let took = start.elapsed();
+
+    assert!(!out.is_empty());
+    assert!(took < Duration::from_millis(2), "scroll step took {took:?}");
+}
+
+#[test]
+#[ignore = "slow: run with cargo test --release -- --ignored"]
+fn graphics_first_frame_adds_under_100ms_vs_text() {
+    let rows = distinct_rows();
+    let style = raster_style(CELL);
+    let plan = plan_for(&rows, &style, 0, 40);
+    let mut p = Presenter::new(512);
+    let mut out = Vec::new();
+
+    // Rasterizing and transmitting 40 rows into an in-memory writer is all the
+    // graphics path adds over the text frame.
+    let start = Instant::now();
+    present_plan(&mut p, &mut out, &rows, &style, &plan);
+    let took = start.elapsed();
+
+    assert!(out.len() > 40 * 100);
+    assert!(
+        took < Duration::from_millis(100),
+        "first graphics frame took {took:?}"
+    );
 }

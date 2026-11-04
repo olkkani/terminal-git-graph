@@ -1,7 +1,7 @@
 //! Terminal setup/teardown and the event loop.
 
 use std::error::Error;
-use std::io::{self, stdout, Stdout};
+use std::io::{self, stdout, Stdout, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Once;
@@ -20,6 +20,11 @@ use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
 use crate::app::{action_error_message, App, Command};
+use crate::gfx::detect::cell_px_from_window;
+use crate::gfx::present::RowPlacement;
+use crate::gfx::raster::RasterStyle;
+use crate::gfx::session::{self, present_frame, GfxMode, GfxSession};
+use crate::gfx::CellPx;
 use crate::git::{Git, GitError};
 use crate::input::{self, translate_key, ClickTracker};
 use crate::manygit::view::Manygit;
@@ -48,11 +53,31 @@ pub fn enter() -> io::Result<Tui> {
     entered
 }
 
-/// Leaves raw mode and the alternate screen; both are attempted even if one fails.
+/// Deletes all graph images first, then leaves raw mode and the alternate screen; each
+/// step is attempted even if another fails.
 pub fn restore() -> io::Result<()> {
+    let images = clear_graphics(&mut stdout(), session::graphics_used());
     let raw = disable_raw_mode();
     let screen = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen, Show);
-    raw.and(screen)
+    images.and(raw).and(screen)
+}
+
+/// Removes every image placement and image from the terminal when graphics were used;
+/// writes nothing otherwise.
+pub fn clear_graphics(out: &mut impl Write, used: bool) -> io::Result<()> {
+    if !used {
+        return Ok(());
+    }
+    out.write_all(&session::exit_sequence())?;
+    out.flush()
+}
+
+/// The graph images a screen wants shown after a draw.
+pub struct GfxFrame {
+    pub placements: Vec<RowPlacement>,
+    pub style: RasterStyle,
+    /// Renders the RGBA pixels of the row image with a placement's key.
+    pub render: Box<dyn FnMut(u64) -> Vec<u8>>,
 }
 
 /// What the event loop drives: a single repository's graph or the Manygit list.
@@ -78,6 +103,13 @@ pub trait Screen {
     ) -> Option<Command>;
     fn apply(&mut self, cmd: Command) -> Result<(), GitError>;
     fn show_dialog(&mut self, dialog: Dialog);
+    /// Graph images for the screen last drawn in `area`; `None` while the graph is
+    /// not shown or is covered (menu, dialog, too small), which draws it as text.
+    fn gfx_frame(&mut self, _area: Rect, _cell: CellPx) -> Option<GfxFrame> {
+        None
+    }
+    /// Whether graph cells are drawn blank, for images to show through.
+    fn set_gfx_active(&mut self, _on: bool) {}
 }
 
 impl Screen for App {
@@ -119,6 +151,12 @@ impl Screen for App {
     }
     fn show_dialog(&mut self, dialog: Dialog) {
         self.open_dialog(dialog);
+    }
+    fn gfx_frame(&mut self, area: Rect, cell: CellPx) -> Option<GfxFrame> {
+        App::gfx_frame(self, area, cell)
+    }
+    fn set_gfx_active(&mut self, on: bool) {
+        App::set_gfx_active(self, on);
     }
 }
 
@@ -162,6 +200,12 @@ impl Screen for Manygit {
     fn show_dialog(&mut self, dialog: Dialog) {
         Manygit::show_dialog(self, dialog);
     }
+    fn gfx_frame(&mut self, area: Rect, cell: CellPx) -> Option<GfxFrame> {
+        Manygit::gfx_frame(self, area, cell)
+    }
+    fn set_gfx_active(&mut self, on: bool) {
+        Manygit::set_gfx_active(self, on);
+    }
 }
 
 /// Applies `cmd`; a git failure is shown in a dialog instead of ending the app.
@@ -179,9 +223,10 @@ const INPUT_POLL: Duration = Duration::from_millis(50);
 
 /// Runs `screen` until it quits, always restoring the terminal. Filesystem changes in
 /// the shown repository, finished git actions and periodic refreshes redraw the view.
-pub fn run(screen: &mut impl Screen) -> Result<(), Box<dyn Error>> {
+/// In graphics `mode` the graph column is shown as images.
+pub fn run(screen: &mut impl Screen, mode: GfxMode) -> Result<(), Box<dyn Error>> {
     let mut term = enter()?;
-    let result = event_loop(&mut term, screen);
+    let result = event_loop(&mut term, screen, &mut GfxSession::new(mode));
     // A loop error says more than a failure to restore the terminal afterwards.
     let restored = restore();
     result?;
@@ -219,12 +264,21 @@ fn sync_watch(screen: &mut impl Screen, watching: &mut Option<Watching>) {
     *watching = Some(Watching { dir, live });
 }
 
-fn event_loop(term: &mut Tui, screen: &mut impl Screen) -> Result<(), Box<dyn Error>> {
+fn event_loop(
+    term: &mut Tui,
+    screen: &mut impl Screen,
+    gfx: &mut GfxSession,
+) -> Result<(), Box<dyn Error>> {
     let mut clicks = ClickTracker::new();
     let mut watching = None;
     while !screen.should_quit() {
         sync_watch(screen, &mut watching);
         term.draw(|f| screen.draw(f))?;
+        let size = term.size()?;
+        let area = Rect::new(0, 0, size.width, size.height);
+        if present_frame(gfx, screen, term.backend_mut(), area) {
+            continue;
+        }
         // Draw the detail header first, then read the files and redraw.
         match screen.load_pending() {
             Ok(true) => continue,
@@ -260,6 +314,13 @@ fn event_loop(term: &mut Tui, screen: &mut impl Screen) -> Result<(), Box<dyn Er
                 let size = term.size()?;
                 let area = Rect::new(0, 0, size.width, size.height);
                 screen.mouse_command(area, m, &mut clicks, Instant::now())
+            }
+            Event::Resize(..) => {
+                let cell = crossterm::terminal::window_size()
+                    .ok()
+                    .and_then(|s| cell_px_from_window((s.width, s.height), (s.columns, s.rows)));
+                gfx.on_resize(screen, term.backend_mut(), cell);
+                None
             }
             _ => None,
         };

@@ -276,10 +276,10 @@ fn uncommitted_row_is_first_with_count() {
     let mut app = app_for(&repo);
     let rows = render(&app, 100, 6);
     assert!(
-        rows[1].contains("Uncommitted changes (5: 3 tracked, 2 untracked)"),
+        rows[2].contains("Uncommitted changes (5: 3 tracked, 2 untracked)"),
         "{rows:?}"
     );
-    assert!(rows[2].contains("base"), "{rows:?}");
+    assert!(rows[3].contains("base"), "{rows:?}");
     assert_eq!(app.selected_hash(), None);
     app.apply(Command::Down).unwrap();
     assert_eq!(app.selected_hash(), Some(head.as_str()));
@@ -365,14 +365,14 @@ fn header_shows_refresh_error_truncated() {
     let rows = render(&app, 80, 6);
     let header = &rows[0];
     let rest = header
-        .strip_prefix("main  1 commit  ! ")
+        .strip_prefix("(⑂ main)  ! ")
         .unwrap_or_else(|| panic!("{header:?}"));
     // The first line of git's message, cut to 40 cells (including "  ! ") with an ellipsis.
     let shown = &rest[..rest.find('…').expect("truncated")];
     assert!(err.starts_with(shown), "{shown:?} vs {err:?}");
     assert_eq!(format!("  ! {shown}…").width(), 40);
-    // The toolbar still fits after it.
-    assert!(header.trim_end().ends_with("Remotes"), "{header:?}");
+    // The commit count still fits after it.
+    assert!(header.trim_end().ends_with("1 commit"), "{header:?}");
 
     // A successful refresh clears it.
     app.on_watch(WatchEvent::RefsChanged);
@@ -450,7 +450,8 @@ fn detached_head_row_shows_head_badge() {
         .iter()
         .find(|l| l.contains("first"))
         .expect("row of first");
-    assert!(row.contains("HEAD first"), "{rows:?}");
+    // The badge ends in a parenthesis, then one space before the subject.
+    assert!(row.contains("HEAD) first"), "{rows:?}");
 }
 
 const HEART: &str = "❤️";
