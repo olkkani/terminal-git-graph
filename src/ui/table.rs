@@ -8,7 +8,10 @@ use ratatui::text::{Line, Span};
 use ratatui::Frame;
 
 use crate::app::{App, Row};
+use crate::gfx::present::RowPlacement;
+use crate::gfx::raster::{row_key, row_size, RasterStyle};
 use crate::git::refs::{Head, RefKind, RefLabel};
+use crate::graph::lanes::GraphRow;
 use crate::graph::render::{render_row, render_uncommitted, Cell, RenderOpts};
 use crate::input::Hit;
 use crate::ui::glyphs::{badge_glyphs, BadgeGlyphs};
@@ -67,7 +70,12 @@ pub(crate) fn draw(app: &App, frame: &mut Frame, area: Rect) {
             height: 1,
             ..area
         };
-        let mut spans = graph_spans(&cells, graph_w, app);
+        let mut spans = if app.gfx_active {
+            // Images go over these cells; the row background shows through them.
+            vec![Span::raw(" ".repeat(graph_w))]
+        } else {
+            graph_spans(&cells, graph_w, app)
+        };
         spans.push(Span::raw(" "));
         let mut bg = None;
         match app.row(i) {
@@ -168,11 +176,7 @@ struct RowsLayout {
 fn rows_layout(app: &App, area: Rect) -> RowsLayout {
     let visible = visible_rows(app, area.height.saturating_sub(1) as usize);
     let head = app.head_hash();
-    let head_lane = app
-        .commits
-        .iter()
-        .position(|c| Some(c.hash.as_str()) == head)
-        .map_or(0, |i| app.graph[i].lane);
+    let head_lane = head_lane(app);
 
     let graphs: Vec<Vec<Cell>> = visible
         .clone()
@@ -211,6 +215,106 @@ fn rows_layout(app: &App, area: Rect) -> RowsLayout {
         graph_w,
         desc_w,
     }
+}
+
+/// What a row image shows.
+pub(crate) enum RowImage {
+    Commit {
+        row: GraphRow,
+        opts: RenderOpts,
+    },
+    /// The working-tree row: a dashed line on HEAD's lane, `width` lanes wide.
+    Uncommitted {
+        head_lane: usize,
+        width: usize,
+    },
+}
+
+/// One image per row in view of the table drawn in `area`, placed over its graph
+/// cells. `None` when a row's graph is wider than the graph column, which only the
+/// text graph can cut.
+pub(crate) fn row_images(
+    app: &App,
+    area: Rect,
+    style: &RasterStyle,
+) -> Option<Vec<(RowPlacement, RowImage)>> {
+    if app.row_count() == 0 {
+        return Some(Vec::new());
+    }
+    let layout = rows_layout(app, area);
+    let head = app.head_hash();
+    let head_lane = head_lane(app);
+    let mut out = Vec::new();
+    for (n, i) in layout.visible.enumerate() {
+        let (image, lanes) = match app.row(i) {
+            Some(Row::Commit(c)) => {
+                let row = app.graph[c].clone();
+                let opts = RenderOpts {
+                    is_head: Some(app.commits[c].hash.as_str()) == head,
+                    ascii: false,
+                };
+                let lanes = row.width;
+                (RowImage::Commit { row, opts }, lanes)
+            }
+            _ => (
+                RowImage::Uncommitted {
+                    head_lane,
+                    width: head_lane + 1,
+                },
+                head_lane + 1,
+            ),
+        };
+        let cols = 2 * lanes;
+        if cols > layout.graph_w {
+            return None;
+        }
+        let (key, (rgba_w, rgba_h)) = match &image {
+            RowImage::Commit { row, opts } => (row_key(row, opts, style), row_size(row, style)),
+            RowImage::Uncommitted { head_lane, width } => {
+                let stand_in = uncommitted_stand_in(*head_lane, *width);
+                let opts = RenderOpts {
+                    is_head: false,
+                    ascii: false,
+                };
+                (row_key(&stand_in, &opts, style), row_size(&stand_in, style))
+            }
+        };
+        let placement = RowPlacement {
+            col: area.x,
+            row: area.y + 1 + n as u16,
+            cols: cols as u16,
+            key,
+            rgba_w,
+            rgba_h,
+        };
+        out.push((placement, image));
+    }
+    Some(out)
+}
+
+/// A row shaped like no real commit row (its color cannot occur), so its cache key and
+/// size stand for the uncommitted image without colliding with commit rows.
+fn uncommitted_stand_in(head_lane: usize, width: usize) -> GraphRow {
+    GraphRow {
+        hash: String::new(),
+        lane: head_lane,
+        color: usize::MAX,
+        pass: Vec::new(),
+        joins: Vec::new(),
+        forks: Vec::new(),
+        from_above: false,
+        continues: false,
+        is_merge: false,
+        width,
+    }
+}
+
+fn head_lane(app: &App) -> usize {
+    let head = app.head_hash();
+    app.commits
+        .iter()
+        .position(|c| Some(c.hash.as_str()) == head)
+        .map_or(0, |i| app.graph[i].lane)
 }
 
 /// What is at `pos` in the table drawn in `area`: a ref label or else the row. The

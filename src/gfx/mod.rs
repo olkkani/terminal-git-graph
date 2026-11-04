@@ -2,6 +2,7 @@ pub mod detect;
 pub mod kitty;
 pub mod present;
 pub mod raster;
+pub mod session;
 
 pub use detect::CellPx;
 

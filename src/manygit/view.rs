@@ -21,10 +21,12 @@ use super::RepoEntry;
 use crate::actions::{execute, needs_confirm, Action};
 use crate::app::{action_error_message, App, Command, NavRequest};
 use crate::clipboard::{self, CopyVia};
+use crate::gfx::CellPx;
 use crate::git::{Git, GitError};
 use crate::input::{self, menu_mouse, translate_key, ClickKind, ClickTracker, Hit, InputMode};
 use crate::menus::{confirm_dialog, input_dialog, with_value};
 use crate::remote_url::{open_in_browser, to_https};
+use crate::terminal::GfxFrame;
 use crate::ui::dialog::{Dialog, DialogOutcome, DialogState};
 use crate::ui::layout::{
     display_width, fit_to_width, truncate_to_width, MIN_HEIGHT, MIN_WIDTH, TOO_SMALL,
@@ -165,6 +167,8 @@ pub struct Manygit {
     /// Opened graphs draw with ASCII characters.
     ascii: bool,
     nerd_font: bool,
+    /// Opened graphs draw their graph column blank, for images to show over it.
+    gfx_active: bool,
     /// Selected entry.
     selected: usize,
     /// First visible line; adjusted while drawing to keep the selection in view.
@@ -207,6 +211,7 @@ impl Manygit {
             depth,
             ascii: false,
             nerd_font: false,
+            gfx_active: false,
             selected: 0,
             offset: Cell::new(0),
             page_height: Cell::new(1),
@@ -365,6 +370,19 @@ impl Manygit {
     /// Opened graphs end ref badges in round caps.
     pub fn set_nerd_font(&mut self, on: bool) {
         self.nerd_font = on;
+    }
+
+    /// Opened graphs draw their graph column blank (see `App::set_gfx_active`).
+    pub fn set_gfx_active(&mut self, on: bool) {
+        self.gfx_active = on;
+        for app in self.apps.values_mut() {
+            app.set_gfx_active(on);
+        }
+    }
+
+    /// The shown graph's row images; the list has none.
+    pub fn gfx_frame(&self, area: Rect, cell: CellPx) -> Option<GfxFrame> {
+        self.graph()?.gfx_frame(area, cell)
     }
 
     /// Passes a filesystem change to the shown graph; the list ignores it.
@@ -594,6 +612,7 @@ impl Manygit {
                     app.set_copier(self.copier);
                     app.set_ascii(self.ascii);
                     app.set_nerd_font(self.nerd_font);
+                    app.set_gfx_active(self.gfx_active);
                     self.apps.insert(path.clone(), app);
                 }
                 Err(e) => {

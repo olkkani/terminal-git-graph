@@ -40,6 +40,12 @@ const HEAD_BG: Rgb = (0x26, 0x32, 0x38);
 const SELECTED_BG: Rgb = (0x37, 0x47, 0x4f);
 const MUTED: Rgb = (0x90, 0x90, 0x90);
 
+/// A lane color as true RGB, for the graphics renderer.
+pub fn lane_rgb(index: usize) -> crate::gfx::raster::Rgb {
+    let (r, g, b) = PALETTE[index % PALETTE_LEN];
+    crate::gfx::raster::Rgb(r, g, b)
+}
+
 pub fn lane_color(index: usize, depth: ColorDepth) -> Color {
     convert(PALETTE[index % PALETTE_LEN], depth)
 }
