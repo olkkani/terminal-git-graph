@@ -72,11 +72,19 @@ herdr 단축키를 설정하려면 아래 항목이 추가로 필요합니다.
 | **herdr** | 터미널 워크스페이스 매니저 | `herdr --version` |
 | **jq** | 단축키 스크립트에서 JSON 파싱 | `jq --version` (macOS: `brew install jq`) |
 
-> 미리 빌드된 바이너리는 아직 제공하지 않습니다. Rust로 직접 빌드해서 설치합니다.
+> 미리 빌드된 바이너리를 쓰면 Rust 툴체인이 필요 없습니다. 소스에서 빌드할 때만 필요합니다.
 
 ## 설치 방법
 
-### 1. 저장소 clone 후 설치
+### 1. 설치 스크립트 (권장)
+
+macOS(Apple Silicon/Intel)와 Linux(x86_64/arm64)를 지원합니다. 최신 릴리스 바이너리를 받아 `~/.cargo/bin`에 설치합니다.
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/olkkani/terminal-git-graph/releases/latest/download/terminal-git-graph-installer.sh | sh
+```
+
+### 2. 저장소 clone 후 설치
 
 ```sh
 git clone git@github.com:olkkani/terminal-git-graph.git
@@ -84,7 +92,7 @@ cd terminal-git-graph
 cargo install --path .
 ```
 
-### 2. (또는) clone 없이 바로 설치
+### 3. (또는) clone 없이 바로 설치
 
 ```sh
 cargo install --git https://github.com/olkkani/terminal-git-graph
