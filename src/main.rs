@@ -83,7 +83,11 @@ fn start(path: &Path) -> Result<(), Failure> {
     // The Linux console and dumb terminals have no box-drawing characters.
     let ascii = matches!(term.as_deref(), Some("linux" | "dumb"));
     // Asked once, before the event loop reads any input.
-    let blocked = env_blocks_graphics(env::var_os("TMUX").is_some(), term.as_deref());
+    let blocked = env_blocks_graphics(
+        env::var_os("TMUX").is_some(),
+        env::var_os("ZELLIJ").is_some(),
+        term.as_deref(),
+    );
     let probed = if !blocked && config.renderer != RendererSetting::Text {
         probe_terminal(Duration::from_millis(300))
     } else {

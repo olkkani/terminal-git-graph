@@ -407,10 +407,10 @@ fn detail_labels_are_dimmed() {
 }
 
 #[test]
-fn hash_uses_accent_color() {
+fn commit_hash_uses_accent_color() {
     let (_r, app, hash) = detail_fixture();
     let buf = draw(&app, 80, 40);
-    let cell = cell_of(&buf, "Hash", &hash);
+    let cell = cell_of(&buf, "Commit", &hash);
     assert_eq!(cell.fg, Color::Cyan);
 }
 

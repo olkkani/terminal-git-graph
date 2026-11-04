@@ -122,8 +122,8 @@ pub fn cell_px_from_window(pixels: (u16, u16), cells: (u16, u16)) -> Option<Cell
 }
 
 /// Environments where the probe is skipped entirely.
-pub fn env_blocks_graphics(tmux: bool, term: Option<&str>) -> bool {
-    tmux || matches!(term, Some("dumb") | Some("linux"))
+pub fn env_blocks_graphics(tmux: bool, zellij: bool, term: Option<&str>) -> bool {
+    tmux || zellij || matches!(term, Some("dumb") | Some("linux"))
 }
 
 /// Extra wait after the probe deadline for a terminator that is still in

@@ -92,7 +92,7 @@ fn header_lines(app: &App, view: &DetailView) -> Vec<Line<'static>> {
         .add_modifier(Modifier::DIM);
     let field = |label: &str, value: String| {
         let value = printable(&value);
-        let value = if label == "Hash" {
+        let value = if label == "Commit" {
             Span::styled(value, Style::new().fg(Color::Cyan))
         } else {
             Span::raw(value)
@@ -106,7 +106,7 @@ fn header_lines(app: &App, view: &DetailView) -> Vec<Line<'static>> {
             lines.push(Line::styled(printable(message.next().unwrap_or("")), bold));
             lines.extend(message.map(|l| Line::raw(printable(l))));
             lines.push(Line::raw(""));
-            lines.push(field("Hash", d.hash.clone()));
+            lines.push(field("Commit", d.hash.clone()));
             let parents = if d.parents.is_empty() {
                 "(none)".to_string()
             } else {
@@ -129,7 +129,7 @@ fn header_lines(app: &App, view: &DetailView) -> Vec<Line<'static>> {
                 .map_or("", |c| c.subject.as_str());
             lines.push(Line::styled(printable(subject), bold));
             lines.push(Line::raw(""));
-            lines.push(field("Hash", hash.clone()));
+            lines.push(field("Commit", hash.clone()));
             lines.push(Line::raw(""));
         }
         (DetailTarget::Uncommitted, _) => {}

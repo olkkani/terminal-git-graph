@@ -75,12 +75,13 @@ fn cell_px_division() {
 }
 
 #[test]
-fn env_blocks_tmux_and_dumb() {
-    assert!(env_blocks_graphics(true, Some("xterm-kitty")));
-    assert!(env_blocks_graphics(false, Some("dumb")));
-    assert!(env_blocks_graphics(false, Some("linux")));
-    assert!(!env_blocks_graphics(false, Some("xterm-ghostty")));
-    assert!(!env_blocks_graphics(false, None));
+fn env_blocks_tmux_zellij_and_dumb() {
+    assert!(env_blocks_graphics(true, false, Some("xterm-kitty")));
+    assert!(env_blocks_graphics(false, true, Some("xterm-kitty")));
+    assert!(env_blocks_graphics(false, false, Some("dumb")));
+    assert!(env_blocks_graphics(false, false, Some("linux")));
+    assert!(!env_blocks_graphics(false, false, Some("xterm-ghostty")));
+    assert!(!env_blocks_graphics(false, false, None));
 }
 
 #[test]

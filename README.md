@@ -53,7 +53,8 @@ Press `?` for the keys, `q` to quit. All bindings are in [docs/keys.md](docs/key
   fetch, fetch all, commit, stash, reset and open the remote's web page.
 - Keyboard and mouse: click, double click, right click menus, wheel.
 - Graphics mode: anti-aliased graph lanes and nodes on Kitty-graphics terminals (such as
-  ghostty), detected at startup; text mode everywhere else, including tmux and zellij.
+  ghostty), detected at startup; text mode everywhere else, including tmux and zellij
+  (detected via `TMUX` / `ZELLIJ`).
 - Falls back to 256 colors without true color, and to ASCII graph lines on terminals
   without box drawing.
 - No network access except the fetch, pull, push and remote-branch delete you run. No

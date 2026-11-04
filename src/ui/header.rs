@@ -46,11 +46,11 @@ type Piece = (Span<'static>, Option<ToolbarButton>);
 fn pieces(app: &App, width: usize) -> Vec<Piece> {
     let mut line = nav_spans(app, width);
     let nav_w = spans_width(&line);
-    let (left, left_w) = left_spans(app, width - nav_w);
+    let (left, left_w) = left_spans(app, width.saturating_sub(nav_w));
     line.extend(left.into_iter().map(|s| (s, None)));
-    let room = width - nav_w - left_w;
+    let room = width.saturating_sub(nav_w + left_w);
     let (controls, right) = toolbar(app, room);
-    let pad = room - spans_width(&controls) - spans_width(&right);
+    let pad = room.saturating_sub(spans_width(&controls) + spans_width(&right));
     line.extend(controls);
     line.push((Span::raw(" ".repeat(pad)), None));
     line.extend(right);
@@ -110,6 +110,10 @@ fn left_spans(app: &App, width: usize) -> (Vec<Span<'static>>, usize) {
     };
     let caps = display_width(glyphs.left_cap) + display_width(glyphs.right_cap);
     let chrome = display_width(&icon) + 2 * display_width(pad) + caps;
+    // No room for the pill itself (a long Manygit repository name in a narrow pane).
+    if width < chrome {
+        return (Vec::new(), 0);
+    }
     let name = truncate_to_width(&branch, width.saturating_sub(chrome));
     let body = format!("{pad}{icon}{name}{pad}");
     let mut used = display_width(&body) + caps;

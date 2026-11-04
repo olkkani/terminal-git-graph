@@ -290,3 +290,22 @@ fn narrow_header_truncates_branch_pill_within_width() {
     assert!(row.starts_with(" ⎇ a-very"), "{row:?}");
     assert!(row.contains('…'), "{row:?}");
 }
+
+#[test]
+fn embedded_long_repo_name_fits_narrow_header() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    for nerd_font in [false, true] {
+        let mut app = app_for(&repo);
+        app.set_nerd_font(nerd_font);
+        app.embed("a-rather-long-repository-name".to_string(), Vec::new());
+        for w in [20, 30, 40, 80] {
+            for (y, row) in render(&app, w, 10).iter().enumerate() {
+                assert!(
+                    row.width() <= w as usize,
+                    "nerd_font={nerd_font} w={w} y={y}: {row:?}"
+                );
+            }
+        }
+    }
+}

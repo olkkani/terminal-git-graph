@@ -39,11 +39,11 @@ for these.
 ## Detection and limits
 
 Before the event loop starts, `tgg` asks the terminal whether it supports Kitty graphics
-and what its cell size is, waiting at most 300 ms. Environment variables alone never turn
-graphics on; the terminal has to answer.
+and what its cell size is, waiting about 450 ms at worst (300 ms plus a 150 ms grace
+window). Environment variables alone never turn graphics on; the terminal has to answer.
 
-- tmux, zellij, and `TERM=dumb` or `TERM=linux` use text mode. (tmux is skipped without
-  asking; zellij does not pass the graphics protocol through.)
+- tmux and zellij (detected via `TMUX` / `ZELLIJ`) and `TERM=dumb` or `TERM=linux` use
+  text mode without asking the terminal.
 - With `renderer = "graphics"`, if detection fails `tgg` starts in text mode and shows a
   notice saying so.
 - With `renderer = "text"` nothing is asked of the terminal.
