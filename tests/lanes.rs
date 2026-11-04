@@ -25,7 +25,10 @@ fn linear_history_stays_in_lane_0() {
     }
     assert!(rows[0].continues && rows[1].continues);
     assert!(!rows[0].from_above, "tip has no child above");
-    assert!(rows[1].from_above && rows[2].from_above, "chained children feed lane");
+    assert!(
+        rows[1].from_above && rows[2].from_above,
+        "chained children feed lane"
+    );
 }
 
 #[test]
