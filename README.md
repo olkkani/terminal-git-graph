@@ -5,8 +5,9 @@ remotes and tags, shows each commit's files and diffs, and runs common git actio
 menus. Pointed at a folder instead of a repository, it lists the repositories inside
 (Manygit) and opens their graphs from there.
 
-It runs in any terminal: no terminal-specific protocols, no Nerd Font, keyboard and mouse
-both work.
+It runs in any terminal with keyboard and mouse. On terminals that support the Kitty
+graphics protocol the graph is drawn as smooth images; everywhere else it is text. See
+[docs/visual-modes.md](docs/visual-modes.md).
 
 ## Install
 
@@ -51,6 +52,8 @@ Press `?` for the keys, `q` to quit. All bindings are in [docs/keys.md](docs/key
   changes and how far ahead/behind they are, refreshed every 15 seconds; pull, push,
   fetch, fetch all, commit, stash, reset and open the remote's web page.
 - Keyboard and mouse: click, double click, right click menus, wheel.
+- Graphics mode: anti-aliased graph lanes and nodes on Kitty-graphics terminals (such as
+  ghostty), detected at startup; text mode everywhere else, including tmux and zellij.
 - Falls back to 256 colors without true color, and to ASCII graph lines on terminals
   without box drawing.
 - No network access except the fetch, pull, push and remote-branch delete you run. No
@@ -68,6 +71,11 @@ scan_depth = 3
 show_tags = false
 # Color theme.
 theme = "default"
+# "auto" uses graphics when the terminal supports them; "text" never does;
+# "graphics" is like auto but warns if they cannot be used.
+renderer = "auto"
+# Round pill caps on badges (needs a font with the ◖ ◗ glyphs).
+nerd_font = false
 ```
 
 There is no settings screen. An invalid file is reported at startup and the defaults are
@@ -78,7 +86,7 @@ used.
 ```sh
 cargo test
 cargo test --release -- --ignored   # performance checks on a 50,000-commit repository
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo deny check licenses
 ```
 
