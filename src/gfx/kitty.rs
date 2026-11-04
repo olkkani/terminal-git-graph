@@ -28,7 +28,10 @@ pub fn transmit_rgba(
 ) -> Result<Vec<u8>, GfxError> {
     let expected = width as usize * height as usize * 4;
     if rgba.len() != expected {
-        return Err(GfxError::RgbaLengthMismatch { expected, actual: rgba.len() });
+        return Err(GfxError::RgbaLengthMismatch {
+            expected,
+            actual: rgba.len(),
+        });
     }
     let encoded = STANDARD.encode(rgba);
     let mut chunks: Vec<&[u8]> = encoded.as_bytes().chunks(MAX_CHUNK).collect();
@@ -51,7 +54,10 @@ pub fn transmit_rgba(
 
 /// Place an image over `cols` x `rows` cells at the cursor without moving the cursor.
 pub fn place(id: ImageId, placement: u32, cols: u16, rows: u16) -> Vec<u8> {
-    apc(&format!("a=p,i={},p={placement},c={cols},r={rows},q=2,C=1", id.0), &[])
+    apc(
+        &format!("a=p,i={},p={placement},c={cols},r={rows},q=2,C=1", id.0),
+        &[],
+    )
 }
 
 pub fn delete_all_placements() -> Vec<u8> {

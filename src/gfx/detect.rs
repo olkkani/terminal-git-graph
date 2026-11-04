@@ -126,9 +126,40 @@ pub fn env_blocks_graphics(tmux: bool, term: Option<&str>) -> bool {
     tmux || matches!(term, Some("dumb") | Some("linux"))
 }
 
+/// Extra wait after the probe deadline for a terminator that is still in
+/// flight, so late replies are consumed instead of leaking as key presses.
+pub const PROBE_GRACE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Collects probe replies until DA1 arrives or `deadline + grace` passes.
+/// `read(wait, buf)` waits at most `wait` for input, appends whatever bytes
+/// are available to `buf` (possibly none) and returns `false` when the input
+/// is closed or failed.
+pub fn collect_probe_reply<F>(
+    deadline: std::time::Instant,
+    grace: std::time::Duration,
+    mut read: F,
+) -> ProbeReply
+where
+    F: FnMut(std::time::Duration, &mut Vec<u8>) -> bool,
+{
+    let end = deadline + grace;
+    let mut buf = Vec::new();
+    loop {
+        let reply = parse_probe_reply(&buf);
+        if reply.done {
+            return reply;
+        }
+        let remaining = end.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() || !read(remaining, &mut buf) {
+            return parse_probe_reply(&buf);
+        }
+    }
+}
+
 /// Queries the controlling terminal. Returns the cell size only when the Kitty
 /// query succeeded and a cell size is known. The terminal settings are
-/// restored on every exit path and all bytes read are consumed here.
+/// restored on every exit path and all bytes read are consumed here; if no
+/// DA1 arrives in time, the input queue is flushed before restoring.
 #[cfg(unix)]
 pub fn probe_terminal(timeout: std::time::Duration) -> Option<CellPx> {
     use std::io::{ErrorKind, Read, Write};
@@ -176,17 +207,9 @@ pub fn probe_terminal(timeout: std::time::Duration) -> Option<CellPx> {
     tty.write_all(&probe_request()).ok()?;
     tty.flush().ok()?;
 
-    let mut buf = Vec::new();
     let mut chunk = [0u8; 256];
-    loop {
-        if parse_probe_reply(&buf).done {
-            break;
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        let ms = remaining
+    let reply = collect_probe_reply(deadline, PROBE_GRACE, |wait, buf| {
+        let ms = wait
             .as_micros()
             .div_ceil(1000)
             .min(libc::c_int::MAX as u128) as libc::c_int;
@@ -198,23 +221,31 @@ pub fn probe_terminal(timeout: std::time::Duration) -> Option<CellPx> {
         // SAFETY: pfd is a valid pollfd array of length 1.
         let n = unsafe { libc::poll(&mut pfd, 1, ms) };
         if n < 0 {
-            if std::io::Error::last_os_error().kind() == ErrorKind::Interrupted {
-                continue;
-            }
-            break;
+            return std::io::Error::last_os_error().kind() == ErrorKind::Interrupted;
         }
-        if n == 0 || pfd.revents & libc::POLLIN == 0 {
-            break;
+        if n == 0 {
+            return true;
+        }
+        if pfd.revents & libc::POLLIN == 0 {
+            return false;
         }
         match tty.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(len) => buf.extend_from_slice(&chunk[..len]),
-            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Ok(0) => false,
+            Ok(len) => {
+                buf.extend_from_slice(&chunk[..len]);
+                true
+            }
+            Err(e) => e.kind() == ErrorKind::Interrupted,
+        }
+    });
+    if !reply.done {
+        // Late replies would otherwise reach the app as key presses.
+        // SAFETY: fd is an open tty.
+        unsafe {
+            libc::tcflush(fd, libc::TCIFLUSH);
         }
     }
 
-    let reply = parse_probe_reply(&buf);
     if !reply.kitty_ok {
         return None;
     }

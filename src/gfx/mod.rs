@@ -14,7 +14,10 @@ impl fmt::Display for GfxError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             GfxError::RgbaLengthMismatch { expected, actual } => {
-                write!(f, "RGBA length mismatch: expected {expected} bytes, got {actual}")
+                write!(
+                    f,
+                    "RGBA length mismatch: expected {expected} bytes, got {actual}"
+                )
             }
         }
     }

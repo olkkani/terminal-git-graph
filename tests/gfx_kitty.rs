@@ -6,7 +6,10 @@ use terminal_git_graph::gfx::GfxError;
 fn transmit_small_image_single_chunk() {
     let rgba = [255u8, 0, 0, 255, 0, 255, 0, 128];
     let out = transmit_rgba(ImageId(7), 2, 1, &rgba).unwrap();
-    let expected = format!("\x1b_Ga=t,f=32,s=2,v=1,i=7,q=2,m=0;{}\x1b\\", STANDARD.encode(rgba));
+    let expected = format!(
+        "\x1b_Ga=t,f=32,s=2,v=1,i=7,q=2,m=0;{}\x1b\\",
+        STANDARD.encode(rgba)
+    );
     assert_eq!(out, expected.as_bytes());
 }
 
@@ -36,7 +39,10 @@ fn transmit_large_image_is_chunked_at_4096() {
 fn rgba_length_mismatch_errors() {
     assert_eq!(
         transmit_rgba(ImageId(1), 2, 2, &[0; 3]),
-        Err(GfxError::RgbaLengthMismatch { expected: 16, actual: 3 })
+        Err(GfxError::RgbaLengthMismatch {
+            expected: 16,
+            actual: 3
+        })
     );
 }
 

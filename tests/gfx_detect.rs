@@ -90,3 +90,92 @@ fn probe_request_ends_with_da1() {
     assert!(req.windows(5).any(|w| w == b"\x1b[16t"));
     assert!(req.ends_with(b"\x1b[c"));
 }
+
+use std::time::{Duration, Instant};
+
+/// Fake reader idle step: sleeps for the offered wait, cut short at `until`.
+fn idle_wait(wait: Duration, until: Option<Instant>) {
+    let nap = match until {
+        Some(t) => wait.min(t.saturating_duration_since(Instant::now())),
+        None => wait,
+    };
+    std::thread::sleep(nap);
+}
+
+#[test]
+fn late_terminator_within_grace_is_consumed() {
+    let start = Instant::now();
+    let timeout = Duration::from_millis(20);
+    let arrives = start + Duration::from_millis(80);
+    let mut sent = false;
+    let reply = collect_probe_reply(start + timeout, PROBE_GRACE, |wait, buf| {
+        if !sent && Instant::now() >= arrives {
+            buf.extend_from_slice(&[KITTY_OK, CELL, DA1].concat());
+            sent = true;
+        } else {
+            idle_wait(wait, Some(arrives));
+        }
+        true
+    });
+    assert!(reply.done);
+    assert!(reply.kitty_ok);
+    assert_eq!(reply.cell, Some(CellPx { w: 10, h: 20 }));
+    assert!(start.elapsed() < timeout + PROBE_GRACE);
+}
+
+#[test]
+fn silent_terminal_ends_after_timeout_plus_grace() {
+    let start = Instant::now();
+    let timeout = Duration::from_millis(30);
+    let reply = collect_probe_reply(start + timeout, PROBE_GRACE, |wait, _| {
+        idle_wait(wait, None);
+        true
+    });
+    let elapsed = start.elapsed();
+    assert!(!reply.done);
+    assert!(!reply.kitty_ok);
+    assert!(elapsed >= timeout + PROBE_GRACE);
+    assert!(elapsed < timeout + PROBE_GRACE + Duration::from_millis(100));
+}
+
+#[test]
+fn replies_split_across_reads_are_reassembled() {
+    let all = [KITTY_OK, CELL, DA1].concat();
+    let mut chunks = vec![
+        &all[..3],
+        &all[3..12],
+        &all[12..17],
+        &all[17..all.len() - 1],
+    ];
+    chunks.push(&all[all.len() - 1..]);
+    let mut chunks = chunks.into_iter();
+    let mut reads = 0;
+    let reply = collect_probe_reply(
+        Instant::now() + Duration::from_secs(5),
+        PROBE_GRACE,
+        |_, buf| {
+            reads += 1;
+            buf.extend_from_slice(chunks.next().expect("read after DA1"));
+            true
+        },
+    );
+    assert_eq!(reads, 5);
+    assert_eq!(
+        reply,
+        ProbeReply {
+            kitty_ok: true,
+            cell: Some(CellPx { w: 10, h: 20 }),
+            done: true,
+        }
+    );
+}
+
+#[test]
+fn closed_input_stops_collecting() {
+    let reply = collect_probe_reply(
+        Instant::now() + Duration::from_secs(5),
+        PROBE_GRACE,
+        |_, _| false,
+    );
+    assert!(!reply.done);
+}
