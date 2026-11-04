@@ -138,3 +138,15 @@ fn write_error_is_returned() {
         .present(&mut Failing, CELL, &[row(0, 1)], &mut render)
         .is_err());
 }
+
+#[test]
+fn forget_placements_replaces_same_plan_without_retransmitting() {
+    let mut p = Presenter::new(512);
+    let plan = [row(0, 1), row(1, 2)];
+    present(&mut p, CELL, &plan);
+    p.forget_placements();
+    let out = present(&mut p, CELL, &plan);
+    assert_eq!(count(&out, "a=p,"), 2);
+    assert_eq!(count(&out, "a=t,"), 0);
+    assert!(present(&mut p, CELL, &plan).is_empty());
+}

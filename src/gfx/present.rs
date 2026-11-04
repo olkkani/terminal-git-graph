@@ -115,6 +115,12 @@ impl Presenter {
         self.order.push_back(key);
     }
 
+    /// Assume the terminal dropped all placements (e.g. the screen was cleared), so
+    /// the next `present` places every row again; image data stays cached.
+    pub fn forget_placements(&mut self) {
+        self.last_plan = None;
+    }
+
     /// Remove all placements; image data stays cached.
     pub fn clear(&mut self, out: &mut impl Write) -> io::Result<()> {
         self.last_plan = None;

@@ -274,6 +274,34 @@ fn resize_with_new_cell_size_resets_presenter() {
 }
 
 #[test]
+fn resize_with_same_cell_size_places_images_again() {
+    // ratatui clears the screen on resize, which drops the on-screen placements.
+    let repo = branched_repo();
+    let mut app = app_for(&repo);
+    let mut term = Terminal::new(TestBackend::new(80, 10)).unwrap();
+    let mut session = GfxSession::new(GfxMode::Graphics(CELL));
+    let mut out = Vec::new();
+    frame(&mut term, &mut app, &mut session, &mut out);
+    assert!(contains(&out, b"a=p,"));
+
+    for cell in [Some(CELL), None] {
+        out.clear();
+        session.on_resize(&mut app, &mut out, cell);
+        assert!(out.is_empty());
+        frame(&mut term, &mut app, &mut session, &mut out);
+        assert!(
+            contains(&out, b"a=p,"),
+            "rows are placed again after resize"
+        );
+        assert!(!contains(&out, b"a=t,"), "cached images are not sent again");
+
+        out.clear();
+        frame(&mut term, &mut app, &mut session, &mut out);
+        assert!(out.is_empty(), "an identical frame writes nothing");
+    }
+}
+
+#[test]
 fn exit_paths_emit_delete_sequences() {
     // `restore` (used by the normal and error exits of `run` and by the panic hook)
     // writes this first.

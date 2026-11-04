@@ -97,18 +97,20 @@ impl GfxSession {
 
     /// Takes a new cell size (`None` when unknown, which keeps the current one);
     /// a change drops every image so rows are re-rendered at the new size.
+    /// The screen is cleared on resize, so rows are always placed again.
     pub fn on_resize(
         &mut self,
         screen: &mut impl Screen,
         out: &mut impl Write,
         cell: Option<CellPx>,
     ) {
-        let (GfxMode::Graphics(old), Some(new)) = (self.mode, cell) else {
+        let GfxMode::Graphics(old) = self.mode else {
             return;
         };
-        if old == new {
+        let Some(new) = cell.filter(|&new| new != old) else {
+            self.presenter.forget_placements();
             return;
-        }
+        };
         self.mode = GfxMode::Graphics(new);
         self.placed = false;
         if let Err(e) = self.presenter.reset(out) {
