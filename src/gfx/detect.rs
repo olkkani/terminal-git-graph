@@ -209,25 +209,29 @@ pub fn probe_terminal(timeout: std::time::Duration) -> Option<CellPx> {
 
     let mut chunk = [0u8; 256];
     let reply = collect_probe_reply(deadline, PROBE_GRACE, |wait, buf| {
-        let ms = wait
-            .as_micros()
-            .div_ceil(1000)
-            .min(libc::c_int::MAX as u128) as libc::c_int;
-        let mut pfd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
+        // `poll` does not work on /dev/tty on macOS (it reports POLLNVAL), `select` does.
+        let mut tv = libc::timeval {
+            tv_sec: wait.as_secs() as libc::time_t,
+            tv_usec: wait.subsec_micros() as libc::suseconds_t,
         };
-        // SAFETY: pfd is a valid pollfd array of length 1.
-        let n = unsafe { libc::poll(&mut pfd, 1, ms) };
+        // SAFETY: an all-zero fd_set is valid; fd is an open tty below FD_SETSIZE.
+        let mut set: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_SET(fd, &mut set) };
+        // SAFETY: set and tv are valid for the call.
+        let n = unsafe {
+            libc::select(
+                fd + 1,
+                &mut set,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut tv,
+            )
+        };
         if n < 0 {
             return std::io::Error::last_os_error().kind() == ErrorKind::Interrupted;
         }
         if n == 0 {
             return true;
-        }
-        if pfd.revents & libc::POLLIN == 0 {
-            return false;
         }
         match tty.read(&mut chunk) {
             Ok(0) => false,
