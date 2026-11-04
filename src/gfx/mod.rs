@@ -1,4 +1,7 @@
+pub mod detect;
 pub mod kitty;
+
+pub use detect::CellPx;
 
 use std::fmt;
 
