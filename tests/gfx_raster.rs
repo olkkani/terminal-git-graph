@@ -40,6 +40,7 @@ fn row(lane: usize, color: usize, width: usize) -> GraphRow {
         pass: vec![],
         joins: vec![],
         forks: vec![],
+        from_above: true,
         continues: true,
         is_merge: false,
         width,
@@ -66,6 +67,25 @@ fn output_length_matches_row_size() {
         rasterize_row(&r, &opts(false), &s).len(),
         (w * h * 4) as usize
     );
+}
+
+#[test]
+fn tip_row_has_no_stub_above_node() {
+    let s = style();
+    let mut r = row(0, 0, 1);
+    r.from_above = false;
+    let (w, _) = row_size(&r, &s);
+    let buf = rasterize_row(&r, &opts(false), &s);
+    assert_eq!(px(&buf, w, lane_x(0), 0)[3], 0);
+}
+
+#[test]
+fn chained_row_draws_lane_above_node() {
+    let s = style();
+    let r = row(0, 0, 1);
+    let (w, _) = row_size(&r, &s);
+    let buf = rasterize_row(&r, &opts(false), &s);
+    assert_eq!(px(&buf, w, lane_x(0), 0)[3], 255);
 }
 
 #[test]

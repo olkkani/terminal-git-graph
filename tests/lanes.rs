@@ -24,6 +24,8 @@ fn linear_history_stays_in_lane_0() {
         assert_eq!(r.width, 1);
     }
     assert!(rows[0].continues && rows[1].continues);
+    assert!(!rows[0].from_above, "tip has no child above");
+    assert!(rows[1].from_above && rows[2].from_above, "chained children feed lane");
 }
 
 #[test]
@@ -64,6 +66,8 @@ fn merge_into_lane_already_waiting_for_parent() {
         c("A", &[]),
     ]);
     let m = &rows[1];
+    assert!(!rows[0].from_above && !m.from_above, "branch tips");
+    assert!(rows[2].from_above, "merge parent lands in an existing lane");
     assert_eq!(m.lane, 1);
     assert_eq!(
         m.forks,

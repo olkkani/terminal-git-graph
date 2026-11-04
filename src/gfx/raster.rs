@@ -47,10 +47,9 @@ pub fn rasterize_row(row: &GraphRow, opts: &RenderOpts, style: &RasterStyle) -> 
         let x = lane_x(p.lane, style);
         canvas.stroke(&[(x, 0.0), (x, bottom)], half, color(p.color));
     }
-    // The text renderer's node glyph fills the whole cell, so the graphic node is
-    // joined to both cell edges; `GraphRow` does not record whether the lane comes
-    // from above, so the upper half is always drawn.
-    canvas.stroke(&[(nx, 0.0), (nx, cy)], half, color(row.color));
+    if row.from_above {
+        canvas.stroke(&[(nx, 0.0), (nx, cy)], half, color(row.color));
+    }
     if row.continues {
         canvas.stroke(&[(nx, cy), (nx, bottom)], half, color(row.color));
     }
@@ -109,6 +108,7 @@ pub fn row_key(row: &GraphRow, opts: &RenderOpts, style: &RasterStyle) -> u64 {
             k.u64(*color as u64);
         }
     }
+    k.u64(row.from_above as u64);
     k.u64(row.continues as u64);
     k.u64(row.is_merge as u64);
     k.u64(opts.is_head as u64);
