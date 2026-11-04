@@ -1,0 +1,79 @@
+//! Width-dependent layout decisions and display-width text fitting.
+
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
+/// Width from which the author column is shown.
+pub const AUTHOR_MIN_WIDTH: u16 = 70;
+/// Width from which the short-hash column is shown.
+pub const HASH_MIN_WIDTH: u16 = 100;
+/// Below this size the UI shows only a "too small" message.
+pub const MIN_WIDTH: u16 = 20;
+pub const MIN_HEIGHT: u16 = 3;
+/// Shown instead of the UI below `MIN_WIDTH`×`MIN_HEIGHT`.
+pub const TOO_SMALL: &str = "Terminal too small";
+/// From this height the detail sits below the table; shorter terminals show it full screen.
+pub const DETAIL_SPLIT_MIN_HEIGHT: u16 = 30;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Columns {
+    pub author: bool,
+    pub hash: bool,
+}
+
+pub fn columns_for(width: u16) -> Columns {
+    Columns {
+        author: width >= AUTHOR_MIN_WIDTH,
+        hash: width >= HASH_MIN_WIDTH,
+    }
+}
+
+/// Display width summed per grapheme cluster, so emoji with variation selectors,
+/// skin tones or ZWJ sequences count as the terminal (and ratatui) draws them.
+pub fn display_width(s: &str) -> usize {
+    s.graphemes(true).map(UnicodeWidthStr::width).sum()
+}
+
+/// Cuts `s` to at most `width` display columns, ending in '…' when cut. Never splits
+/// a grapheme cluster.
+pub fn truncate_to_width(s: &str, width: usize) -> String {
+    if display_width(s) <= width {
+        return s.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for g in s.graphemes(true) {
+        let w = g.width();
+        if used + w > width - 1 {
+            break;
+        }
+        out.push_str(g);
+        used += w;
+    }
+    out.push('…');
+    out
+}
+
+/// Truncates then pads with spaces to exactly `width` display columns.
+pub fn fit_to_width(s: &str, width: usize) -> String {
+    let mut out = truncate_to_width(s, width);
+    let pad = width - display_width(&out);
+    out.extend(std::iter::repeat_n(' ', pad));
+    out
+}
+
+/// Text safe to draw: tabs become four spaces and other control characters are dropped.
+pub fn printable(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '\t' {
+            out.push_str("    ");
+        } else if !c.is_control() {
+            out.push(c);
+        }
+    }
+    out
+}
