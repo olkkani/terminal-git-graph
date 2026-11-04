@@ -365,7 +365,7 @@ fn header_shows_refresh_error_truncated() {
     let rows = render(&app, 80, 6);
     let header = &rows[0];
     let rest = header
-        .strip_prefix("main  ! ")
+        .strip_prefix(" ⎇ main   ! ")
         .unwrap_or_else(|| panic!("{header:?}"));
     // The first line of git's message, cut to 40 cells (including "  ! ") with an ellipsis.
     let shown = &rest[..rest.find('…').expect("truncated")];

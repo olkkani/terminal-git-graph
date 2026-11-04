@@ -10,7 +10,9 @@ use crate::app::App;
 use crate::git::log::Scope;
 use crate::git::refs::Head;
 use crate::input::ToolbarButton;
+use crate::ui::glyphs::badge_glyphs;
 use crate::ui::layout::{display_width, truncate_to_width};
+use crate::ui::theme;
 
 /// Widest the refresh error may get in the header, in cells.
 const REFRESH_ERROR_MAX: usize = 40;
@@ -93,12 +95,32 @@ fn left_spans(app: &App, width: usize) -> (Vec<Span<'static>>, usize) {
         Head::Branch(name) | Head::Unborn(name) => name.clone(),
         Head::Detached(hash) => format!("detached {}", &hash[..hash.len().min(7)]),
     };
-    let left = truncate_to_width(&branch, width);
-    let mut used = display_width(&left);
-    let mut spans = vec![Span::styled(
-        left,
-        Style::new().add_modifier(Modifier::BOLD),
-    )];
+    let glyphs = badge_glyphs(app.nerd_font, app.ascii);
+    let lane = theme::lane_color(0, app.depth);
+    let style = Style::new()
+        .fg(Color::Black)
+        .bg(lane)
+        .add_modifier(Modifier::BOLD);
+    // Round caps replace the padding space on each side, as on the table badges.
+    let pad = if glyphs.left_cap.is_empty() { " " } else { "" };
+    let icon = if glyphs.local.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", glyphs.local)
+    };
+    let caps = display_width(glyphs.left_cap) + display_width(glyphs.right_cap);
+    let chrome = display_width(&icon) + 2 * display_width(pad) + caps;
+    let name = truncate_to_width(&branch, width.saturating_sub(chrome));
+    let body = format!("{pad}{icon}{name}{pad}");
+    let mut used = display_width(&body) + caps;
+    let mut spans = Vec::new();
+    if !glyphs.left_cap.is_empty() {
+        spans.push(Span::styled(glyphs.left_cap, Style::new().fg(lane)));
+    }
+    spans.push(Span::styled(body, style));
+    if !glyphs.right_cap.is_empty() {
+        spans.push(Span::styled(glyphs.right_cap, Style::new().fg(lane)));
+    }
 
     if app.job_running() {
         let text = truncate_to_width("  Running…", width.saturating_sub(used));

@@ -26,10 +26,7 @@ pub(crate) fn draw(app: &App, view: &DetailView, frame: &mut Frame, area: Rect) 
         }
         None => lines.push(Line::raw("Loading…")),
         Some(files) => {
-            lines.push(Line::styled(
-                format!("Files ({})", files.len()),
-                Style::new().add_modifier(Modifier::BOLD),
-            ));
+            lines.push(files_summary(files));
             for (i, file) in files.iter().enumerate() {
                 let mut line = file_line(file, inner.width as usize);
                 if i == view.file {
@@ -90,12 +87,17 @@ fn scroll_offset(selected_line: Option<usize>, height: usize) -> usize {
 
 fn header_lines(app: &App, view: &DetailView) -> Vec<Line<'static>> {
     let bold = Style::new().add_modifier(Modifier::BOLD);
-    let muted = Style::new().fg(theme::muted(app.depth));
+    let muted = Style::new()
+        .fg(theme::muted(app.depth))
+        .add_modifier(Modifier::DIM);
     let field = |label: &str, value: String| {
-        Line::from(vec![
-            Span::styled(format!("{label:<8}"), muted),
-            Span::raw(printable(&value)),
-        ])
+        let value = printable(&value);
+        let value = if label == "Hash" {
+            Span::styled(value, Style::new().fg(Color::Cyan))
+        } else {
+            Span::raw(value)
+        };
+        Line::from(vec![Span::styled(format!("{label:<8}"), muted), value])
     };
     let mut lines = Vec::new();
     match (&view.target, &view.data) {
@@ -137,17 +139,18 @@ fn header_lines(app: &App, view: &DetailView) -> Vec<Line<'static>> {
 
 /// `M +2 -0 path`; counts are left out when unknown (binary or untracked files).
 fn file_line(file: &FileChange, width: usize) -> Line<'static> {
-    let mut spans = vec![Span::raw(format!("{} ", file.status))];
+    let status = match file.status {
+        'A' => Style::new().fg(Color::Green),
+        'M' => Style::new().fg(Color::Yellow),
+        'D' => Style::new().fg(Color::Red),
+        _ => Style::new(),
+    };
+    let mut spans = vec![
+        Span::styled(file.status.to_string(), status),
+        Span::raw(" "),
+    ];
     if let (Some(added), Some(deleted)) = (file.added, file.deleted) {
-        spans.push(Span::styled(
-            format!("+{added}"),
-            Style::new().fg(Color::Green),
-        ));
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
-            format!("-{deleted}"),
-            Style::new().fg(Color::Red),
-        ));
+        spans.extend(counts(added, deleted));
         spans.push(Span::raw(" "));
     }
     let used: usize = spans.iter().map(|s| display_width(&s.content)).sum();
@@ -155,6 +158,32 @@ fn file_line(file: &FileChange, width: usize) -> Line<'static> {
         &printable(&file.path),
         width.saturating_sub(used),
     )));
+    Line::from(spans)
+}
+
+/// `+added -deleted`, green and red.
+fn counts(added: u32, deleted: u32) -> [Span<'static>; 3] {
+    [
+        Span::styled(format!("+{added}"), Style::new().fg(Color::Green)),
+        Span::raw(" "),
+        Span::styled(format!("-{deleted}"), Style::new().fg(Color::Red)),
+    ]
+}
+
+/// `Files (n)` with the summed counts of the files whose counts are known.
+fn files_summary(files: &[FileChange]) -> Line<'static> {
+    let (added, deleted) = files
+        .iter()
+        .filter_map(|f| f.added.zip(f.deleted))
+        .fold((0, 0), |(a, d), (fa, fd)| (a + fa, d + fd));
+    let mut spans = vec![Span::styled(
+        format!("Files ({})", files.len()),
+        Style::new().add_modifier(Modifier::BOLD),
+    )];
+    if files.iter().any(|f| f.added.is_some()) {
+        spans.push(Span::raw("  "));
+        spans.extend(counts(added, deleted));
+    }
     Line::from(spans)
 }
 

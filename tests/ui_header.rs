@@ -245,7 +245,7 @@ fn narrow_header_drops_items_without_overflow() {
     let (w, h) = (30, 6);
     let header = &render(&app, w, h)[0];
     assert_eq!(header.width(), w as usize, "{header:?}");
-    assert!(header.starts_with("main"), "{header:?}");
+    assert!(header.starts_with(" ⎇ main "), "{header:?}");
     assert!(header.trim_end().ends_with("1 commit"), "{header:?}");
     for gone in ["Fetch", "Remotes", "Current", "All branches"] {
         assert!(!header.contains(gone), "no {gone} in {header:?}");
@@ -259,4 +259,34 @@ fn narrow_header_drops_items_without_overflow() {
         let header = &render(&app, w, h)[0];
         assert_eq!(header.width(), w as usize, "{header:?}");
     }
+}
+
+#[test]
+fn branch_name_is_a_filled_pill_with_icon() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    let app = app_for(&repo);
+    let buf = buffer(&app, 100, 4);
+    let row = &lines(&buf)[0];
+    let icon = terminal_git_graph::ui::glyphs::badge_glyphs(false, false).local;
+    let x = col(row, &format!("{icon} main"));
+    let cell = &buf[(x + 2, 0)];
+    assert_eq!(cell.symbol(), "m");
+    assert_ne!(cell.bg, ratatui::style::Color::Reset, "{row:?}");
+    assert!(cell.modifier.contains(Modifier::BOLD));
+    assert_eq!(buf[(x, 0)].bg, cell.bg);
+}
+
+#[test]
+fn narrow_header_truncates_branch_pill_within_width() {
+    let repo = TestRepo::new();
+    repo.commit("first");
+    repo.branch("a-very-long-branch-name-indeed");
+    repo.checkout("a-very-long-branch-name-indeed");
+    let app = app_for(&repo);
+    let buf = buffer(&app, 20, 4);
+    let row = &lines(&buf)[0];
+    assert!(row.width() <= 20, "{row:?}");
+    assert!(row.starts_with(" ⎇ a-very"), "{row:?}");
+    assert!(row.contains('…'), "{row:?}");
 }
